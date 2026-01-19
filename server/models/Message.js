@@ -53,6 +53,15 @@ const messageSchema = new mongoose.Schema(
       },
     },
     // Message status fields
+    status: {
+      type: String,
+      enum: ["sent", "delivered", "read"],
+      default: "sent",
+    },
+    deliveredAt: {
+      type: Date,
+      default: null,
+    },
     readAt: {
       type: Date,
       default: null,

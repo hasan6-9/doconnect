@@ -48,6 +48,8 @@ router.put("/conversations/:id/mute", messageController.muteConversation);
 router.get("/conversations/:id/messages", messageController.getMessages);
 router.post("/conversations/:id/messages", messageController.sendMessage);
 router.put("/conversations/:id/read", messageController.markConversationAsRead);
+router.put("/mark-delivered", messageController.markMessagesAsDelivered);
+router.put("/mark-read", messageController.markMessagesAsRead);
 router.put("/:messageId", messageController.editMessage);
 router.delete("/:messageId", messageController.deleteMessage);
 

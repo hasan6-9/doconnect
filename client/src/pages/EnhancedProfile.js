@@ -21,6 +21,8 @@ import {
   Loader,
   CheckCircle,
   AlertCircle,
+  Clock,
+  Settings,
 } from "lucide-react";
 
 // ============================================================================
@@ -189,15 +191,29 @@ const EnhancedProfile = () => {
 
   const handleDocUpload = (e) => {
     const files = Array.from(e.target.files);
+    console.log(
+      "Selected files for upload:",
+      files.map((f) => ({ name: f.name, type: f.type, size: f.size }))
+    );
+
     if (files.length === 0) return;
 
+    // Reset input to allow selecting the same file again
+    e.target.value = "";
+
     for (const file of files) {
+      // More permissible type check or just log it
       if (!file.type.startsWith("image/") && file.type !== "application/pdf") {
-        toast.error("Only images and PDFs are allowed");
+        console.warn("Invalid file type:", file.type);
+        toast.error(
+          `File type ${
+            file.type || "unknown"
+          } not supported. Only images and PDFs.`
+        );
         return;
       }
       if (file.size > 10 * 1024 * 1024) {
-        toast.error("Files must be less than 10MB");
+        toast.error(`File ${file.name} is too large (>10MB)`);
         return;
       }
     }
@@ -209,10 +225,36 @@ const EnhancedProfile = () => {
   const handleBasicSubmit = (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
+
+    // Parse subspecialties from comma-separated string
+    const subspecialtiesStr = formData.get("subspecialties");
+    const subspecialties = subspecialtiesStr
+      ? subspecialtiesStr
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : [];
+
+    // Parse languages array
+    const languages = [];
+    let langIndex = 0;
+    while (formData.get(`languages[${langIndex}].language`)) {
+      const language = formData.get(`languages[${langIndex}].language`);
+      const proficiency = formData.get(`languages[${langIndex}].proficiency`);
+      if (language) {
+        languages.push({ language, proficiency });
+      }
+      langIndex++;
+    }
+
     const data = {
       firstName: formData.get("firstName"),
       lastName: formData.get("lastName"),
+      phone: formData.get("phone"),
+      yearsOfExperience: parseInt(formData.get("yearsOfExperience")) || 0,
       bio: formData.get("bio"),
+      subspecialties,
+      languages,
       location: {
         city: formData.get("city"),
         state: formData.get("state"),
@@ -415,6 +457,11 @@ const EnhancedProfile = () => {
               { id: "overview", label: "Overview", icon: User },
               { id: "professional", label: "Professional", icon: Briefcase },
               { id: "documents", label: "Documents", icon: FileText },
+              {
+                id: "availability",
+                label: "Availability & Preferences",
+                icon: Clock,
+              },
             ].map((tab) => {
               const Icon = tab.icon;
               return (
@@ -475,6 +522,9 @@ const EnhancedProfile = () => {
               deleteDocMutation={deleteDocMutation}
             />
           )}
+          {activeTab === "availability" && (
+            <AvailabilityTab profile={profile} queryClient={queryClient} />
+          )}
         </div>
       </div>
     </div>
@@ -532,6 +582,83 @@ const OverviewTab = ({
                 required
               />
             </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Phone Number
+              </label>
+              <input
+                name="phone"
+                type="tel"
+                defaultValue={profile.phone}
+                placeholder="+1-555-0123"
+                pattern="[+]?[0-9-() ]+"
+                className="input w-full"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Years of Experience
+              </label>
+              <input
+                name="yearsOfExperience"
+                type="number"
+                min="0"
+                max="50"
+                defaultValue={profile.yearsOfExperience}
+                className="input w-full"
+                required
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Subspecialties
+            </label>
+            <input
+              name="subspecialties"
+              defaultValue={profile.subspecialties?.join(", ")}
+              placeholder="Interventional Cardiology, Electrophysiology"
+              className="input w-full"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Separate multiple subspecialties with commas
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Languages
+            </label>
+            {(profile.languages?.length > 0
+              ? profile.languages
+              : [{ language: "", proficiency: "conversational" }]
+            ).map((lang, idx) => (
+              <div key={idx} className="grid grid-cols-2 gap-2 mb-2">
+                <input
+                  name={`languages[${idx}].language`}
+                  defaultValue={lang.language}
+                  placeholder="English"
+                  className="input w-full"
+                />
+                <select
+                  name={`languages[${idx}].proficiency`}
+                  defaultValue={lang.proficiency}
+                  className="input w-full"
+                >
+                  <option value="basic">Basic</option>
+                  <option value="conversational">Conversational</option>
+                  <option value="fluent">Fluent</option>
+                  <option value="native">Native</option>
+                </select>
+              </div>
+            ))}
+            <p className="text-xs text-gray-500">
+              Add language and proficiency level
+            </p>
           </div>
 
           <div>
@@ -615,6 +742,49 @@ const OverviewTab = ({
             </div>
           </div>
 
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <p className="text-sm text-gray-600">Phone</p>
+              <p className="text-gray-900">{profile.phone || "Not provided"}</p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-600">Years of Experience</p>
+              <p className="text-gray-900">{profile.yearsOfExperience} years</p>
+            </div>
+          </div>
+
+          {profile.subspecialties?.length > 0 && (
+            <div>
+              <p className="text-sm text-gray-600 mb-2">Subspecialties</p>
+              <div className="flex flex-wrap gap-2">
+                {profile.subspecialties.map((sub, idx) => (
+                  <span
+                    key={idx}
+                    className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-medium"
+                  >
+                    {sub}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {profile.languages?.length > 0 && (
+            <div>
+              <p className="text-sm text-gray-600 mb-2">Languages</p>
+              <div className="flex flex-wrap gap-2">
+                {profile.languages.map((lang, idx) => (
+                  <span
+                    key={idx}
+                    className="px-3 py-1 bg-green-100 text-green-800 rounded-full text-sm"
+                  >
+                    {lang.language} ({lang.proficiency})
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
           {profile.bio && (
             <div>
               <p className="text-sm text-gray-600">Bio</p>
@@ -640,8 +810,8 @@ const OverviewTab = ({
               <p className="text-gray-900">{profile.email}</p>
             </div>
             <div>
-              <p className="text-sm text-gray-600">Experience</p>
-              <p className="text-gray-900">{profile.yearsOfExperience} years</p>
+              <p className="text-sm text-gray-600">Role</p>
+              <p className="text-gray-900 capitalize">{profile.role}</p>
             </div>
           </div>
         </div>
@@ -1226,7 +1396,8 @@ const DocumentsTab = ({
         />
       </div>
 
-      {uploadProgress > 0 && uploadProgress < 100 && (
+      {(uploadDocsMutation.isLoading ||
+        (uploadProgress > 0 && uploadProgress < 100)) && (
         <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm font-medium text-blue-900">
@@ -1256,10 +1427,14 @@ const DocumentsTab = ({
                 <div className="flex items-center gap-2">
                   <FileText className="w-5 h-5 text-blue-600" />
                   <div>
-                    <h4 className="font-semibold text-gray-900 text-sm">
-                      {doc.type.replace(/_/g, " ").toUpperCase()}
+                    <h4
+                      className="font-semibold text-gray-900 text-sm truncate max-w-[180px]"
+                      title={doc.name}
+                    >
+                      {doc.name || doc.type.replace(/_/g, " ").toUpperCase()}
                     </h4>
                     <p className="text-xs text-gray-500">
+                      {doc.type.replace(/_/g, " ").toUpperCase()} •{" "}
                       {new Date(doc.createdAt).toLocaleDateString()}
                     </p>
                   </div>
@@ -1323,5 +1498,496 @@ const DocumentsTab = ({
     </div>
   </div>
 );
+
+// ============================================================================
+// AVAILABILITY & PREFERENCES TAB
+// ============================================================================
+const AvailabilityTab = ({ profile, queryClient }) => {
+  const [editingAvailability, setEditingAvailability] = useState(false);
+  const [editingPreferences, setEditingPreferences] = useState(false);
+
+  const availabilityMutation = useMutation({
+    mutationFn: (data) => profileAPI.updateAvailability(data),
+    onSuccess: () => {
+      toast.success("Availability updated!");
+      queryClient.invalidateQueries(["profile"]);
+      setEditingAvailability(false);
+    },
+    onError: (error) => {
+      toast.error(handleApiError(error).message);
+    },
+  });
+
+  const preferencesMutation = useMutation({
+    mutationFn: (data) => profileAPI.updateBasic({ job_preferences: data }),
+    onSuccess: () => {
+      toast.success("Preferences updated!");
+      queryClient.invalidateQueries(["profile"]);
+      setEditingPreferences(false);
+    },
+    onError: (error) => {
+      toast.error(handleApiError(error).message);
+    },
+  });
+
+  const handleAvailabilitySubmit = (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+
+    const data = {
+      timezone: formData.get("timezone"),
+      hoursPerWeek: parseInt(formData.get("hoursPerWeek")) || 0,
+      responseTime: formData.get("responseTime"),
+    };
+
+    availabilityMutation.mutate(data);
+  };
+
+  const handlePreferencesSubmit = (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+
+    const categories = [];
+    formData
+      .getAll("preferred_categories")
+      .forEach((cat) => categories.push(cat));
+
+    const data = {
+      seeking_opportunities: formData.get("seeking_opportunities") === "on",
+      preferred_categories: categories,
+      preferred_budget_range: {
+        min: parseInt(formData.get("budget_min")) || 0,
+        max: parseInt(formData.get("budget_max")) || 0,
+      },
+      preferred_timeline: formData.get("preferred_timeline"),
+      availability_hours_per_week:
+        parseInt(formData.get("availability_hours")) || 0,
+      remote_work_preference: formData.get("remote_work_preference"),
+      notification_preferences: {
+        new_jobs: formData.get("notify_new_jobs") === "on",
+        job_matches: formData.get("notify_matches") === "on",
+        application_updates: formData.get("notify_updates") === "on",
+      },
+    };
+
+    preferencesMutation.mutate(data);
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Availability Section */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-xl font-bold text-gray-900">
+            Availability Settings
+          </h3>
+          {!editingAvailability && (
+            <button
+              onClick={() => setEditingAvailability(true)}
+              className="btn-secondary flex items-center gap-2"
+            >
+              <Edit className="w-4 h-4" />
+              Edit
+            </button>
+          )}
+        </div>
+
+        {editingAvailability ? (
+          <form onSubmit={handleAvailabilitySubmit} className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Timezone
+                </label>
+                <select
+                  name="timezone"
+                  defaultValue={
+                    profile.availability?.timezone || "America/New_York"
+                  }
+                  className="input w-full"
+                >
+                  <option value="America/New_York">Eastern Time (ET)</option>
+                  <option value="America/Chicago">Central Time (CT)</option>
+                  <option value="America/Denver">Mountain Time (MT)</option>
+                  <option value="America/Los_Angeles">Pacific Time (PT)</option>
+                  <option value="Europe/London">London (GMT)</option>
+                  <option value="Europe/Paris">Paris (CET)</option>
+                  <option value="Asia/Tokyo">Tokyo (JST)</option>
+                  <option value="Asia/Dubai">Dubai (GST)</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Available Hours Per Week
+                </label>
+                <input
+                  name="hoursPerWeek"
+                  type="number"
+                  min="0"
+                  max="168"
+                  defaultValue={profile.availability?.hoursPerWeek || 40}
+                  className="input w-full"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Response Time
+              </label>
+              <select
+                name="responseTime"
+                defaultValue={
+                  profile.availability?.responseTime || "within-day"
+                }
+                className="input w-full"
+              >
+                <option value="immediate">Immediate (within 1 hour)</option>
+                <option value="within-hour">Within a few hours</option>
+                <option value="within-day">Within a day</option>
+                <option value="within-week">Within a week</option>
+              </select>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                type="submit"
+                disabled={availabilityMutation.isLoading}
+                className="btn-primary flex items-center gap-2"
+              >
+                <Save className="w-4 h-4" />
+                {availabilityMutation.isLoading ? "Saving..." : "Save Changes"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditingAvailability(false)}
+                className="btn-secondary"
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        ) : (
+          <div className="space-y-3">
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <p className="text-sm text-gray-600">Timezone</p>
+                <p className="text-gray-900 font-medium">
+                  {profile.availability?.timezone || "Not set"}
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-600">Hours Per Week</p>
+                <p className="text-gray-900 font-medium">
+                  {profile.availability?.hoursPerWeek || 0} hours
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-600">Response Time</p>
+                <p className="text-gray-900 font-medium capitalize">
+                  {profile.availability?.responseTime?.replace(/-/g, " ") ||
+                    "Not set"}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Job Preferences Section - Only for Junior Doctors */}
+      {profile.role === "junior" && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-xl font-bold text-gray-900">Job Preferences</h3>
+            {!editingPreferences && (
+              <button
+                onClick={() => setEditingPreferences(true)}
+                className="btn-secondary flex items-center gap-2"
+              >
+                <Edit className="w-4 h-4" />
+                Edit
+              </button>
+            )}
+          </div>
+
+          {editingPreferences ? (
+            <form onSubmit={handlePreferencesSubmit} className="space-y-4">
+              <div className="flex items-center gap-3 p-4 bg-blue-50 rounded-lg">
+                <input
+                  type="checkbox"
+                  name="seeking_opportunities"
+                  id="seeking_opportunities"
+                  defaultChecked={
+                    profile.job_preferences?.seeking_opportunities
+                  }
+                  className="w-5 h-5 text-blue-600 rounded"
+                />
+                <label
+                  htmlFor="seeking_opportunities"
+                  className="text-sm font-medium text-gray-900"
+                >
+                  I am currently seeking job opportunities
+                </label>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Preferred Job Categories
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    "consultation",
+                    "research",
+                    "documentation",
+                    "review",
+                    "teaching",
+                    "writing",
+                  ].map((cat) => (
+                    <label
+                      key={cat}
+                      className="flex items-center gap-2 p-2 hover:bg-gray-50 rounded"
+                    >
+                      <input
+                        type="checkbox"
+                        name="preferred_categories"
+                        value={cat}
+                        defaultChecked={profile.job_preferences?.preferred_categories?.includes(
+                          cat
+                        )}
+                        className="w-4 h-4 text-blue-600 rounded"
+                      />
+                      <span className="text-sm capitalize">{cat}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Minimum Budget ($)
+                  </label>
+                  <input
+                    type="number"
+                    name="budget_min"
+                    min="0"
+                    defaultValue={
+                      profile.job_preferences?.preferred_budget_range?.min || 0
+                    }
+                    className="input w-full"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Maximum Budget ($)
+                  </label>
+                  <input
+                    type="number"
+                    name="budget_max"
+                    min="0"
+                    defaultValue={
+                      profile.job_preferences?.preferred_budget_range?.max || 0
+                    }
+                    className="input w-full"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Preferred Timeline
+                  </label>
+                  <select
+                    name="preferred_timeline"
+                    defaultValue={
+                      profile.job_preferences?.preferred_timeline || "flexible"
+                    }
+                    className="input w-full"
+                  >
+                    <option value="immediate">Immediate</option>
+                    <option value="short_term">Short Term (1-3 months)</option>
+                    <option value="medium_term">
+                      Medium Term (3-6 months)
+                    </option>
+                    <option value="long_term">Long Term (6+ months)</option>
+                    <option value="flexible">Flexible</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Available Hours Per Week
+                  </label>
+                  <input
+                    type="number"
+                    name="availability_hours"
+                    min="0"
+                    max="168"
+                    defaultValue={
+                      profile.job_preferences?.availability_hours_per_week || 20
+                    }
+                    className="input w-full"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Remote Work Preference
+                </label>
+                <select
+                  name="remote_work_preference"
+                  defaultValue={
+                    profile.job_preferences?.remote_work_preference ||
+                    "flexible"
+                  }
+                  className="input w-full"
+                >
+                  <option value="remote_only">Remote Only</option>
+                  <option value="hybrid">Hybrid</option>
+                  <option value="on_site">On-Site</option>
+                  <option value="flexible">Flexible</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Notification Preferences
+                </label>
+                <div className="space-y-2">
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      name="notify_new_jobs"
+                      defaultChecked={
+                        profile.job_preferences?.notification_preferences
+                          ?.new_jobs !== false
+                      }
+                      className="w-4 h-4 text-blue-600 rounded"
+                    />
+                    <span className="text-sm">
+                      Notify me about new job postings
+                    </span>
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      name="notify_matches"
+                      defaultChecked={
+                        profile.job_preferences?.notification_preferences
+                          ?.job_matches !== false
+                      }
+                      className="w-4 h-4 text-blue-600 rounded"
+                    />
+                    <span className="text-sm">Notify me about job matches</span>
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      name="notify_updates"
+                      defaultChecked={
+                        profile.job_preferences?.notification_preferences
+                          ?.application_updates !== false
+                      }
+                      className="w-4 h-4 text-blue-600 rounded"
+                    />
+                    <span className="text-sm">
+                      Notify me about application updates
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  type="submit"
+                  disabled={preferencesMutation.isLoading}
+                  className="btn-primary flex items-center gap-2"
+                >
+                  <Save className="w-4 h-4" />
+                  {preferencesMutation.isLoading
+                    ? "Saving..."
+                    : "Save Preferences"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditingPreferences(false)}
+                  className="btn-secondary"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          ) : (
+            <div className="space-y-4">
+              <div
+                className={`p-4 rounded-lg ${
+                  profile.job_preferences?.seeking_opportunities
+                    ? "bg-green-50"
+                    : "bg-gray-50"
+                }`}
+              >
+                <p className="text-sm font-medium">
+                  {profile.job_preferences?.seeking_opportunities
+                    ? "✓ Currently seeking opportunities"
+                    : "Not currently seeking opportunities"}
+                </p>
+              </div>
+
+              {profile.job_preferences?.preferred_categories?.length > 0 && (
+                <div>
+                  <p className="text-sm text-gray-600 mb-2">
+                    Preferred Categories
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {profile.job_preferences.preferred_categories.map(
+                      (cat, idx) => (
+                        <span
+                          key={idx}
+                          className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm capitalize"
+                        >
+                          {cat}
+                        </span>
+                      )
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <p className="text-sm text-gray-600">Budget Range</p>
+                  <p className="text-gray-900 font-medium">
+                    ${profile.job_preferences?.preferred_budget_range?.min || 0}{" "}
+                    - $
+                    {profile.job_preferences?.preferred_budget_range?.max || 0}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-600">Timeline</p>
+                  <p className="text-gray-900 font-medium capitalize">
+                    {profile.job_preferences?.preferred_timeline?.replace(
+                      /_/g,
+                      " "
+                    ) || "Not set"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-600">Remote Preference</p>
+                  <p className="text-gray-900 font-medium capitalize">
+                    {profile.job_preferences?.remote_work_preference?.replace(
+                      /_/g,
+                      " "
+                    ) || "Not set"}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
 
 export default EnhancedProfile;

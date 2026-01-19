@@ -1,6 +1,12 @@
 // server/scripts/seed.js - Database Seeding Script for DocConnect
 const path = require("path");
-require("dotenv").config({ path: path.join(__dirname, "../.env") });
+
+// Load environment-specific .env file
+const envFile =
+  process.env.NODE_ENV === "production"
+    ? ".env.production"
+    : ".env.development";
+require("dotenv").config({ path: path.join(__dirname, "..", envFile) });
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 const User = require("../models/User");
@@ -10,6 +16,7 @@ const Conversation = require("../models/Conversation");
 const Message = require("../models/Message");
 const Notification = require("../models/Notification");
 const Subscription = require("../models/Subscription");
+const Appointment = require("../models/Appointment");
 
 // Connect to MongoDB
 const connectDB = async () => {
@@ -32,6 +39,7 @@ const clearDatabase = async () => {
     await Message.deleteMany({});
     await Notification.deleteMany({});
     await Subscription.deleteMany({});
+    await Appointment.deleteMany({});
     console.log("🗑️  Database cleared");
   } catch (error) {
     console.error("❌ Error clearing database:", error);
@@ -1041,6 +1049,134 @@ const seedNotifications = async (users) => {
   }
 };
 
+// Seed Appointments
+const seedAppointments = async (users, applications) => {
+  try {
+    const seniorDoctors = users.filter((u) => u.role === "senior");
+    const juniorDoctors = users.filter((u) => u.role === "junior");
+
+    const appointments = [
+      // Pending appointment - For shortlisted application (Alex Thompson)
+      {
+        doctorInitiator: seniorDoctors[2]._id, // Emily Rodriguez
+        doctorInvitee: juniorDoctors[2]._id, // Alex Thompson
+        startTime: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000), // 2 days from now
+        endTime: new Date(
+          Date.now() + 2 * 24 * 60 * 60 * 1000 + 60 * 60 * 1000
+        ), // 1 hour duration
+        duration: 60,
+        timezone: "America/New_York",
+        purpose: "Interview for Telepsychiatry Position",
+        notes:
+          "Please prepare to discuss your experience with telepsychiatry and patient management.",
+        status: "pending",
+        meetingProvider: "zoom",
+        conversationId: null, // Will be linked when conversation is created
+      },
+      // Confirmed appointment - With Zoom link
+      {
+        doctorInitiator: seniorDoctors[0]._id, // Sarah Johnson
+        doctorInvitee: juniorDoctors[0]._id, // David Kim
+        startTime: new Date(Date.now() + 1 * 24 * 60 * 60 * 1000), // Tomorrow
+        endTime: new Date(
+          Date.now() + 1 * 24 * 60 * 60 * 1000 + 45 * 60 * 1000
+        ), // 45 min duration
+        duration: 45,
+        timezone: "America/New_York",
+        purpose: "Research Collaboration Discussion",
+        notes:
+          "Let's discuss the infectious disease research project timeline and your role.",
+        status: "confirmed",
+        meetingProvider: "zoom",
+        meetingId: "seed_meeting_123456",
+        meetingJoinUrl: "https://zoom.us/j/123456789?pwd=example",
+        meetingPassword: "research2024",
+        conversationId: null,
+      },
+      // Another confirmed appointment - Upcoming soon
+      {
+        doctorInitiator: seniorDoctors[1]._id, // Michael Chen
+        doctorInvitee: juniorDoctors[1]._id, // Jessica Martinez
+        startTime: new Date(Date.now() + 3 * 60 * 60 * 1000), // 3 hours from now
+        endTime: new Date(Date.now() + 3 * 60 * 60 * 1000 + 30 * 60 * 1000), // 30 min duration
+        duration: 30,
+        timezone: "America/Los_Angeles",
+        purpose: "Stroke Case Review",
+        notes: "Quick consultation on the acute stroke patient case.",
+        status: "confirmed",
+        meetingProvider: "zoom",
+        meetingId: "seed_meeting_789012",
+        meetingJoinUrl: "https://zoom.us/j/789012345?pwd=example2",
+        meetingPassword: "stroke2024",
+        conversationId: null,
+      },
+      // Completed appointment - Past
+      {
+        doctorInitiator: seniorDoctors[2]._id, // Emily Rodriguez
+        doctorInvitee: juniorDoctors[3]._id, // Priya Patel
+        startTime: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000), // 5 days ago
+        endTime: new Date(
+          Date.now() - 5 * 24 * 60 * 60 * 1000 + 60 * 60 * 1000
+        ),
+        duration: 60,
+        timezone: "America/Chicago",
+        purpose: "Radiology Consultation",
+        notes: "Review of complex imaging cases.",
+        status: "completed",
+        meetingProvider: "zoom",
+        meetingId: "seed_meeting_345678",
+        meetingJoinUrl: "https://zoom.us/j/345678901?pwd=example3",
+        meetingPassword: "radiology2024",
+        conversationId: null,
+      },
+      // Cancelled appointment
+      {
+        doctorInitiator: seniorDoctors[0]._id, // Sarah Johnson
+        doctorInvitee: juniorDoctors[1]._id, // Jessica Martinez
+        startTime: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days from now
+        endTime: new Date(
+          Date.now() + 7 * 24 * 60 * 60 * 1000 + 30 * 60 * 1000
+        ),
+        duration: 30,
+        timezone: "America/New_York",
+        purpose: "Cardiology Consultation",
+        notes: "Initial consultation cancelled due to scheduling conflict.",
+        status: "cancelled",
+        meetingProvider: "zoom",
+        cancellationReason: "Scheduling conflict - will reschedule",
+        cancelledBy: seniorDoctors[0]._id,
+        cancelledAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000),
+        conversationId: null,
+      },
+    ];
+
+    const createdAppointments = await Appointment.insertMany(appointments);
+    console.log(`✅ Created ${createdAppointments.length} appointments`);
+
+    // Log appointment distribution
+    const pending = createdAppointments.filter(
+      (a) => a.status === "pending"
+    ).length;
+    const confirmed = createdAppointments.filter(
+      (a) => a.status === "confirmed"
+    ).length;
+    const completed = createdAppointments.filter(
+      (a) => a.status === "completed"
+    ).length;
+    const cancelled = createdAppointments.filter(
+      (a) => a.status === "cancelled"
+    ).length;
+    console.log(
+      `   - Pending: ${pending}, Confirmed: ${confirmed}, Completed: ${completed}, Cancelled: ${cancelled}`
+    );
+
+    return createdAppointments;
+  } catch (error) {
+    console.error("❌ Error seeding appointments:", error);
+    throw error;
+  }
+};
+
 // Seed Subscriptions
 const seedSubscriptions = async (users) => {
   try {
@@ -1199,6 +1335,7 @@ const seedDatabase = async () => {
     const applications = await seedApplications(users, jobs);
     await seedConversationsAndMessages(users);
     await seedNotifications(users);
+    await seedAppointments(users, applications);
 
     console.log("\n✅ Database seeding completed successfully!");
     console.log("\n📋 Test Accounts:");

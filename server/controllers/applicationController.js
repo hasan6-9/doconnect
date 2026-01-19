@@ -10,6 +10,10 @@ const notificationService = require("../utils/notificationService");
 // @route   POST /api/applications/submit
 // @access  Private (Junior doctors only)
 exports.submitApplication = async (req, res) => {
+  console.log("\\n========================================");
+  console.log("🚀 SUBMIT APPLICATION CALLED");
+  console.log("========================================\\n");
+
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -63,30 +67,87 @@ exports.submitApplication = async (req, res) => {
       });
     }
 
-    // Check if user has already applied
-    const existingApplication = await Application.findOne({
+    // Check if user has already applied (exclude withdrawn applications)
+    // First check for any existing application (including withdrawn)
+    const anyExistingApplication = await Application.findOne({
       job_id,
       applicant_id: req.user.id,
     });
 
-    if (existingApplication) {
+    // Check for active (non-withdrawn) application
+    const activeApplication = await Application.findOne({
+      job_id,
+      applicant_id: req.user.id,
+      status: { $ne: "withdrawn" },
+    });
+
+    console.log("🔍 Checking for existing application:", {
+      job_id,
+      applicant_id: req.user.id,
+      anyExistingApplication: anyExistingApplication
+        ? {
+            _id: anyExistingApplication._id,
+            status: anyExistingApplication.status,
+          }
+        : null,
+      activeApplication: activeApplication
+        ? { _id: activeApplication._id, status: activeApplication.status }
+        : null,
+    });
+
+    // If there's an active (non-withdrawn) application, reject
+    if (activeApplication) {
       return res.status(400).json({
         success: false,
         message: "You have already applied to this job",
       });
     }
 
-    // Create application
-    const applicationData = {
-      job_id,
-      applicant_id: req.user.id,
-      proposal,
-      applicant_notes,
-      status: "submitted",
-      source,
-    };
+    let application;
 
-    const application = await Application.create(applicationData);
+    // If there's a withdrawn application, update it instead of creating new
+    if (
+      anyExistingApplication &&
+      anyExistingApplication.status === "withdrawn"
+    ) {
+      console.log(
+        "📝 Reactivating withdrawn application:",
+        anyExistingApplication._id
+      );
+
+      // Update the existing withdrawn application with new data
+      anyExistingApplication.proposal = proposal;
+      anyExistingApplication.applicant_notes = applicant_notes;
+      anyExistingApplication.status = "submitted";
+      anyExistingApplication.source = source;
+      anyExistingApplication.submitted_at = new Date();
+      anyExistingApplication.communication_log.push({
+        type: "status_change",
+        content: "Application resubmitted after withdrawal",
+        from: "applicant",
+        date: new Date(),
+      });
+
+      await anyExistingApplication.save();
+      application = anyExistingApplication;
+
+      console.log("✅ Application reactivated successfully");
+    } else {
+      // Create new application
+      console.log("📝 Creating new application");
+
+      const applicationData = {
+        job_id,
+        applicant_id: req.user.id,
+        proposal,
+        applicant_notes,
+        status: "submitted",
+        source,
+      };
+
+      application = await Application.create(applicationData);
+      console.log("✅ New application created:", application._id);
+    }
 
     // Calculate match score
     await application.calculateMatchScore();
@@ -114,9 +175,9 @@ exports.submitApplication = async (req, res) => {
     try {
       await notificationService.createJobApplicationNotification(
         job.posted_by,
-        req.user.id,
-        job._id,
-        application._id
+        application, // Full application object
+        job, // Full job object
+        req.user // Full applicant user object
       );
     } catch (notifError) {
       console.error("Error sending application notification:", notifError);
@@ -156,7 +217,13 @@ exports.submitApplication = async (req, res) => {
 // @access  Private (Junior doctors only)
 exports.getMyApplications = async (req, res) => {
   try {
-    const { page = 1, limit = 20, status, sortBy = "createdAt" } = req.query;
+    const {
+      page = 1,
+      limit = 20,
+      status,
+      sortBy = "createdAt",
+      job_id,
+    } = req.query;
 
     if (req.user.role !== "junior") {
       return res.status(403).json({
@@ -170,6 +237,7 @@ exports.getMyApplications = async (req, res) => {
       limit: parseInt(limit),
       status,
       sortBy,
+      job_id, // Pass job_id to filter by specific job
     };
 
     const applications = await Application.findByUser(req.user.id, options);
@@ -342,6 +410,15 @@ exports.updateApplicationStatus = async (req, res) => {
       });
     }
 
+    // Prevent manual interview_scheduled status (must be set via appointment)
+    if (status === "interview_scheduled" && !req.body.fromAppointment) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Cannot manually set status to interview_scheduled. Please schedule an appointment instead.",
+      });
+    }
+
     // Update application
     application.status = status;
     if (employer_notes) {
@@ -375,6 +452,41 @@ exports.updateApplicationStatus = async (req, res) => {
     } catch (notifError) {
       console.error("Error sending status change notification:", notifError);
       // Don't fail the request if notification fails
+    }
+
+    // Send chat message about status change if conversation exists
+    try {
+      const Conversation = require("../models/Conversation");
+      const Message = require("../models/Message");
+
+      // Find conversation between employer and applicant
+      const conversation = await Conversation.findOne({
+        participants: { $all: [req.user.id, application.applicant_id._id] },
+      });
+
+      if (conversation) {
+        const statusMessages = {
+          under_review: "📋 Your application is now under review",
+          shortlisted: "🎯 Great news! Your application has been shortlisted",
+          interview_scheduled:
+            "📅 Interview scheduled! Check your appointments",
+          accepted: "🎉 Congratulations! Your application has been accepted",
+          rejected: "❌ Application status updated to rejected",
+        };
+
+        const messageContent =
+          statusMessages[status] || `Application status changed to ${status}`;
+
+        await Message.create({
+          conversationId: conversation._id,
+          sender: req.user.id,
+          recipient: application.applicant_id._id,
+          content: messageContent,
+          messageType: "system",
+        });
+      }
+    } catch (error) {
+      console.error("Error sending status change message:", error);
     }
 
     res.status(200).json({

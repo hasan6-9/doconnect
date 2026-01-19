@@ -3,6 +3,8 @@ import React, { useState, useEffect, useCallback } from "react";
 import { useAuth } from "../context/AuthContext";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import toast from "react-hot-toast";
+import MatchScoreModal from "../components/applications/MatchScoreModal";
 import { applicationAPI, jobAPI, handleApiError } from "../api";
 import {
   ArrowLeft,
@@ -14,11 +16,11 @@ import {
   Briefcase,
   DollarSign,
   Calendar,
-  Clock,
-  TrendingUp,
   User,
   Award,
   Info,
+  AlertTriangle,
+  X,
 } from "lucide-react";
 
 const ApplicationSubmission = () => {
@@ -27,11 +29,15 @@ const ApplicationSubmission = () => {
   const navigate = useNavigate();
 
   // State
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [showMatchScore, setShowMatchScore] = useState(false);
+  const [matchScore, setMatchScore] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
   const [job, setJob] = useState(null);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [submittedMatchScore, setSubmittedMatchScore] = useState(null);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -69,20 +75,52 @@ const ApplicationSubmission = () => {
     }
   };
 
-  // Cached match score query
-  const { data: matchScore, isLoading: matchLoading } = useQuery({
-    queryKey: ["match-score", jobId, user?.id],
+  // Fetch cached match score from backend
+  const { data: cachedMatchScore, isLoading: matchLoading } = useQuery({
+    queryKey: ["matchScore", jobId, user?.id],
     queryFn: async () => {
-      const response = await applicationAPI.calculateMatch?.(jobId);
-      return response?.data?.data?.matchScore;
+      try {
+        const response = await applicationAPI.getMatchScore(jobId);
+        console.log("📊 Match score from backend:", response);
+        return response?.data?.data?.matchScore || null;
+      } catch (error) {
+        console.log("No cached match score available");
+        return null;
+      }
     },
     enabled: !!user && user?.role === "junior" && !!jobId,
     staleTime: 5 * 60 * 1000, // Cache for 5 minutes
     retry: 1,
-    onError: (err) => {
-      console.log("Match score not available:", err);
-    },
   });
+
+  // Check if user has already applied
+  const { data: existingApplicationData, isLoading: checkingApplication } =
+    useQuery({
+      queryKey: ["existing-application", jobId, user?.id],
+      queryFn: async () => {
+        try {
+          const response = await applicationAPI.getMyApplications({
+            job_id: jobId,
+          });
+          const applications = response?.data?.data || [];
+          // Filter out withdrawn applications - users can reapply after withdrawing
+          const activeApplications = applications.filter(
+            (app) => app.status !== "withdrawn"
+          );
+          return activeApplications.length > 0 ? activeApplications[0] : null;
+        } catch (error) {
+          console.log("Failed to check existing application:", error);
+          return null;
+        }
+      },
+      enabled: !!user && !!jobId,
+      retry: 1,
+      staleTime: 0,
+      cacheTime: 0,
+      refetchOnMount: "always",
+    });
+
+  const existingApplication = existingApplicationData;
 
   const loadDraft = () => {
     try {
@@ -116,8 +154,7 @@ const ApplicationSubmission = () => {
         `application_draft_${jobId}`,
         JSON.stringify(formData)
       );
-      setSuccess("Draft saved");
-      setTimeout(() => setSuccess(""), 2000);
+      toast.success("Draft saved", { duration: 2000 });
     } catch (err) {
       console.error("Failed to save draft:", err);
     }
@@ -189,14 +226,30 @@ const ApplicationSubmission = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
+    console.log("🚀 handleSubmit called");
+    console.log("Form data:", formData);
+
     if (!validateForm()) {
+      console.log("❌ Validation failed");
+      console.log("Validation errors:", validationErrors);
       setError("Please fix the validation errors");
       return;
     }
 
+    console.log("✅ Validation passed");
+
+    // Show confirmation modal instead of submitting directly
+    setShowConfirmModal(true);
+  };
+
+  // New function to handle actual submission after confirmation
+  const handleConfirmedSubmit = async () => {
     try {
       setSubmitting(true);
       setError("");
+      setShowConfirmModal(false);
+
+      console.log("📝 Preparing application data...");
 
       const applicationData = {
         job_id: jobId,
@@ -217,17 +270,45 @@ const ApplicationSubmission = () => {
         source: "search",
       };
 
+      console.log("📤 Submitting application...", applicationData);
+
       const response = await applicationAPI.submit(applicationData);
 
-      setSuccess("Application submitted successfully!");
+      // Show match score modal
+      const score = response?.data?.data?.match_score || 0;
+      setMatchScore(score);
+      setShowMatchScore(true);
+
+      console.log("✅ Application submitted successfully!", response);
+
+      // Use the score already set for match score modal
+      setSubmittedMatchScore(matchScore);
+
+      // Clear draft
       localStorage.removeItem(`application_draft_${jobId}`);
 
-      // Redirect after brief delay
-      setTimeout(() => {
-        navigate("/applications");
-      }, 1500);
+      // Show success modal
+      setShowSuccessModal(true);
+      setSubmitting(false);
     } catch (err) {
       const apiError = handleApiError(err);
+
+      // Check for specific error types
+      if (
+        apiError.message?.includes("already applied") ||
+        apiError.message?.includes("not eligible")
+      ) {
+        toast.error("You have already applied to this job");
+        // Refresh to show "already applied" state
+        setTimeout(() => {
+          window.location.reload();
+        }, 1500);
+        return;
+      }
+
+      // Show error toast
+      toast.error(apiError.message || "Failed to submit application");
+
       setError(
         apiError.message || "Failed to submit application. Please try again."
       );
@@ -256,20 +337,16 @@ const ApplicationSubmission = () => {
     return `$${amount?.toLocaleString()} fixed`;
   };
 
-  // Get match score color
-  const getMatchScoreColor = (score) => {
-    if (score >= 80) return "text-green-600 bg-green-50";
-    if (score >= 60) return "text-blue-600 bg-blue-50";
-    if (score >= 40) return "text-yellow-600 bg-yellow-50";
-    return "text-red-600 bg-red-50";
-  };
-
-  if (loading) {
+  if (loading || checkingApplication) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="flex flex-col items-center space-y-4">
           <Loader className="w-8 h-8 text-blue-600 animate-spin" />
-          <p className="text-gray-600">Loading job details...</p>
+          <p className="text-gray-600">
+            {loading
+              ? "Loading job details..."
+              : "Checking application status..."}
+          </p>
         </div>
       </div>
     );
@@ -298,6 +375,48 @@ const ApplicationSubmission = () => {
     );
   }
 
+  // Show "Already Applied" state
+  if (existingApplication) {
+    return (
+      <div className="min-h-screen bg-gray-50 py-8">
+        <div className="max-w-2xl mx-auto px-4">
+          <Link
+            to={`/jobs/${jobId}`}
+            className="inline-flex items-center text-blue-600 hover:text-blue-800 mb-6"
+          >
+            <ArrowLeft className="w-4 h-4 mr-1.5" />
+            Back to Job Details
+          </Link>
+
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8 text-center">
+            <CheckCircle className="w-16 h-16 text-green-500 mx-auto mb-4" />
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">
+              You've Already Applied
+            </h2>
+            <p className="text-gray-600 mb-6">
+              You submitted an application for this position on{" "}
+              {new Date(existingApplication.createdAt).toLocaleDateString()}
+            </p>
+            <div className="flex gap-3 justify-center">
+              <Link
+                to={`/applications/${existingApplication._id}`}
+                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              >
+                View Your Application
+              </Link>
+              <Link
+                to="/applications"
+                className="px-6 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+              >
+                View All Applications
+              </Link>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 py-4">
       <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -318,7 +437,7 @@ const ApplicationSubmission = () => {
           </p>
         </div>
 
-        {/* Error/Success Messages */}
+        {/* Error Messages */}
         {error && (
           <div className="mb-6 bg-red-50 border-l-4 border-red-500 p-4 rounded">
             <div className="flex items-start">
@@ -326,18 +445,6 @@ const ApplicationSubmission = () => {
               <div>
                 <p className="font-medium text-red-800">Error</p>
                 <p className="text-red-700 text-sm">{error}</p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {success && (
-          <div className="mb-6 bg-green-50 border-l-4 border-green-500 p-4 rounded">
-            <div className="flex items-start">
-              <CheckCircle className="w-5 h-5 text-green-500 mt-0.5 mr-3" />
-              <div>
-                <p className="font-medium text-green-800">Success</p>
-                <p className="text-green-700 text-sm">{success}</p>
               </div>
             </div>
           </div>
@@ -596,7 +703,11 @@ const ApplicationSubmission = () => {
                       Save Draft
                     </button>
                     <button
-                      type="submit"
+                      type="button"
+                      onClick={(e) => {
+                        console.log("🔘 Submit button clicked!");
+                        handleSubmit(e);
+                      }}
                       disabled={submitting}
                       className="flex items-center px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
                     >
@@ -761,6 +872,199 @@ const ApplicationSubmission = () => {
           </div>
         </div>
       </div>
+
+      {/* Confirmation Modal */}
+      {showConfirmModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6 animate-fadeIn">
+            <div className="flex items-start mb-4">
+              <div className="flex-shrink-0">
+                <AlertTriangle className="w-8 h-8 text-yellow-500" />
+              </div>
+              <div className="ml-4 flex-1">
+                <h3 className="text-xl font-bold text-gray-900 mb-2">
+                  Review Your Application
+                </h3>
+                <p className="text-gray-600 text-sm mb-4">
+                  Please review your application carefully. Once submitted, you
+                  will not be able to make changes.
+                </p>
+              </div>
+              <button
+                onClick={() => setShowConfirmModal(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Application Summary */}
+            <div className="bg-gray-50 rounded-lg p-4 mb-6 space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-gray-600">Position:</span>
+                <span className="font-medium text-gray-900">{job?.title}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">Proposed Budget:</span>
+                <span className="font-medium text-gray-900">
+                  ${parseFloat(formData.proposed_budget || 0).toLocaleString()}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">Timeline:</span>
+                <span className="font-medium text-gray-900">
+                  {formData.timeline_days} days
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">Start Date:</span>
+                <span className="font-medium text-gray-900">
+                  {formData.start_date
+                    ? new Date(formData.start_date).toLocaleDateString()
+                    : "Not specified"}
+                </span>
+              </div>
+            </div>
+
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-6">
+              <p className="text-sm text-yellow-800 flex items-start">
+                <Info className="w-4 h-4 mr-2 flex-shrink-0 mt-0.5" />
+                <span>
+                  Applications cannot be edited after submission. Make sure all
+                  information is accurate.
+                </span>
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowConfirmModal(false)}
+                disabled={submitting}
+                className="flex-1 px-4 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmedSubmit}
+                disabled={submitting}
+                className="flex-1 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition-colors disabled:opacity-50 flex items-center justify-center"
+              >
+                {submitting ? (
+                  <>
+                    <Loader className="w-4 h-4 mr-2 animate-spin" />
+                    Submitting...
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-4 h-4 mr-2" />
+                    Confirm Submission
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Success Modal */}
+      {showSuccessModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-lg w-full p-8 animate-fadeIn">
+            <div className="text-center">
+              {/* Success Icon */}
+              <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-green-100 mb-4">
+                <CheckCircle className="h-10 w-10 text-green-600" />
+              </div>
+
+              {/* Success Message */}
+              <h2 className="text-3xl font-bold text-gray-900 mb-2">
+                Application Submitted Successfully
+              </h2>
+              <p className="text-gray-600 mb-6">
+                Your application has been successfully submitted to{" "}
+                <span className="font-semibold text-gray-900">
+                  {job?.title}
+                </span>
+              </p>
+
+              {/* Match Score Display */}
+              {submittedMatchScore !== null &&
+                submittedMatchScore !== undefined && (
+                  <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-6 mb-6 border border-blue-100">
+                    <p className="text-sm font-medium text-gray-600 mb-2">
+                      Your Match Score
+                    </p>
+                    <div className="flex items-center justify-center mb-3">
+                      <div
+                        className={`text-5xl font-bold ${
+                          submittedMatchScore >= 80
+                            ? "text-green-600"
+                            : submittedMatchScore >= 60
+                            ? "text-blue-600"
+                            : submittedMatchScore >= 40
+                            ? "text-yellow-600"
+                            : "text-orange-600"
+                        }`}
+                      >
+                        {submittedMatchScore}%
+                      </div>
+                    </div>
+                    <div className="w-full bg-gray-200 rounded-full h-3 mb-2">
+                      <div
+                        className={`h-3 rounded-full transition-all duration-500 ${
+                          submittedMatchScore >= 80
+                            ? "bg-green-500"
+                            : submittedMatchScore >= 60
+                            ? "bg-blue-500"
+                            : submittedMatchScore >= 40
+                            ? "bg-yellow-500"
+                            : "bg-orange-500"
+                        }`}
+                        style={{ width: `${submittedMatchScore}%` }}
+                      />
+                    </div>
+                    <p className="text-sm text-gray-600">
+                      {submittedMatchScore >= 80
+                        ? "Excellent match! You're a strong candidate."
+                        : submittedMatchScore >= 60
+                        ? "Good match! Your profile aligns well."
+                        : submittedMatchScore >= 40
+                        ? "Fair match. Highlight your strengths."
+                        : "Keep applying to find your perfect match!"}
+                    </p>
+                  </div>
+                )}
+
+              {/* Action Buttons */}
+              <div className="flex flex-col sm:flex-row gap-3">
+                <button
+                  onClick={() => navigate("/applications")}
+                  className="flex-1 inline-flex items-center justify-center px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  <Briefcase className="w-5 h-5 mr-2" />
+                  View My Applications
+                </button>
+                <button
+                  onClick={() => navigate("/jobs")}
+                  className="flex-1 inline-flex items-center justify-center px-6 py-3 border border-gray-300 text-gray-700 font-semibold rounded-lg hover:bg-gray-50 transition-colors"
+                >
+                  Browse More Jobs
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Match Score Modal */}
+      {showMatchScore && (
+        <MatchScoreModal
+          matchScore={matchScore}
+          onClose={() => {
+            setShowMatchScore(false);
+            setShowSuccessModal(true);
+          }}
+        />
+      )}
     </div>
   );
 };

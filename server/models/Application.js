@@ -164,6 +164,11 @@ const ApplicationSchema = new mongoose.Schema(
       max: 100,
       default: 0,
     },
+    appointmentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Appointment",
+      default: null,
+    },
     employer_notes: {
       type: String,
       trim: true,
@@ -540,10 +545,17 @@ ApplicationSchema.statics.findByJob = function (jobId, options = {}) {
 
 // Static method to find applications by user
 ApplicationSchema.statics.findByUser = function (userId, options = {}) {
-  const { page = 1, limit = 20, status, sortBy = "createdAt" } = options;
+  const {
+    page = 1,
+    limit = 20,
+    status,
+    sortBy = "createdAt",
+    job_id,
+  } = options;
 
   let query = { applicant_id: userId };
   if (status) query.status = status;
+  if (job_id) query.job_id = job_id; // Filter by specific job if provided
 
   const sortOptions = {};
   if (sortBy === "deadline") {
@@ -555,7 +567,14 @@ ApplicationSchema.statics.findByUser = function (userId, options = {}) {
   const skip = (page - 1) * limit;
 
   return this.find(query)
-    .populate("job_id", "title category specialty budget timeline status")
+    .populate({
+      path: "job_id",
+      select: "title category specialty budget timeline status posted_by",
+      populate: {
+        path: "posted_by",
+        select: "firstName lastName email",
+      },
+    })
     .sort(sortOptions)
     .skip(skip)
     .limit(limit);

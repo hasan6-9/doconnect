@@ -6,7 +6,14 @@ const mongoose = require("mongoose");
 const cors = require("cors");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
-require("dotenv").config();
+
+// Load environment-specific .env file
+const path = require("path");
+const envFile =
+  process.env.NODE_ENV === "production"
+    ? ".env.production"
+    : ".env.development";
+require("dotenv").config({ path: path.join(__dirname, envFile) });
 
 const app = express();
 
@@ -269,8 +276,11 @@ mongoose
     // ============================================
   })
   .catch((err) => {
-    console.log("MongoDB connection error:", err);
-    process.exit(1);
+    console.error("❌ MongoDB connection failed:", err.message);
+    console.error(
+      "   Server will continue running - MongoDB will retry automatically"
+    );
+    // Don't exit - allow server to run
   });
 
 // MongoDB connection event handlers
@@ -304,6 +314,28 @@ if (process.env.STRIPE_SECRET_KEY) {
       console.log("✅ Stripe connected successfully");
     }
   });
+}
+
+// ============================================================================
+// ZOOM INITIALIZATION (Test connection on startup)
+// ============================================================================
+const zoomService = require("./services/zoomService");
+
+// Verify Zoom connection on startup
+if (zoomService.isConfigured()) {
+  zoomService
+    .getAccessToken()
+    .then(() => {
+      console.log("✅ Zoom API connected successfully");
+    })
+    .catch((err) => {
+      console.error("❌ Zoom connection failed:", err.message);
+      console.error("   Check your ZOOM credentials in .env file");
+    });
+} else {
+  console.log(
+    "ℹ️  Zoom not configured - appointments will work without meeting links"
+  );
 }
 
 // Health check routes
@@ -398,6 +430,8 @@ const jobRoutes = require("./routes/jobs");
 const applicationRoutes = require("./routes/applications");
 const messageRoutes = require("./routes/messages");
 const notificationRoutes = require("./routes/notifications");
+const newsRoutes = require("./routes/news");
+const appointmentRoutes = require("./routes/appointments");
 
 // ============================================================================
 // MOUNT SUBSCRIPTION ROUTES (Add with other routes)
@@ -414,6 +448,8 @@ app.use("/api/jobs", jobRoutes);
 app.use("/api/applications", applicationRoutes);
 app.use("/api/messages", messageRoutes);
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/news", newsRoutes);
+app.use("/api/appointments", appointmentRoutes);
 
 // 404 handler for API routes
 app.all(/^\/api\/.*$/, (req, res) => {
@@ -432,6 +468,8 @@ app.all(/^\/api\/.*$/, (req, res) => {
       "/api/subscriptions/*",
       "/api/messages/*",
       "/api/notifications/*",
+      "/api/news/*",
+      "/api/appointments/*",
     ],
   });
 });

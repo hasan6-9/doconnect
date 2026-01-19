@@ -46,20 +46,29 @@ const JobDetails = () => {
     retry: 2,
   });
 
-  const job = jobData?.data;
+  const job = jobData?.data?.data;
 
-  // ✅ FIX: Track view mutation (but don't call it directly)
+  const isOwner = job?.posted_by?._id === user?.id;
+
+  // Track view mutation
   const trackViewMutation = useMutation({
     mutationFn: () => jobAPI.trackView(jobId),
   });
 
-  // ✅ FIX: Use useEffect to track view only once on mount
+  // Track view only once per session and not for job owner
+  const hasTrackedView = React.useRef(false);
+
   useEffect(() => {
-    if (jobId) {
+    // Only track if:
+    // 1. Job data is loaded
+    // 2. User is not the owner
+    // 3. Haven't tracked this view yet in this session
+    if (job && !isOwner && !hasTrackedView.current) {
       trackViewMutation.mutate();
+      hasTrackedView.current = true;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jobId]); // Only run when jobId changes
+  }, [jobId, isOwner, trackViewMutation]); // Only track once per jobId when not owner
 
   // Fetch top applicants preview (only for job owners)
   const { data: topApplicantsData } = useQuery({
@@ -79,6 +88,46 @@ const JobDetails = () => {
   });
 
   const topApplicants = topApplicantsData?.data?.data || [];
+
+  // Check if current user has already applied to this job
+  const { data: userApplicationData } = useQuery({
+    queryKey: ["user-application", jobId, user?.id],
+    queryFn: async () => {
+      try {
+        const response = await applicationAPI.getMyApplications({
+          job_id: jobId,
+        });
+        console.log("🔍 Application check response:", response);
+        const applications = response?.data?.data || [];
+        // Filter out withdrawn applications - users can reapply after withdrawing
+        const activeApplications = applications.filter(
+          (app) => app.status !== "withdrawn"
+        );
+        console.log(
+          "📋 Active applications found:",
+          activeApplications.length,
+          activeApplications
+        );
+        return activeApplications.length > 0 ? activeApplications[0] : null;
+      } catch (error) {
+        console.log("Failed to check user application:", error);
+        return null;
+      }
+    },
+    enabled:
+      isAuthenticated &&
+      typeof isJunior === "function" &&
+      isJunior() &&
+      !!jobId &&
+      !!user?.id,
+    retry: 1,
+    staleTime: 0, // Always fetch fresh data
+    cacheTime: 0, // Don't cache withdrawn application status
+    refetchOnMount: "always", // Always refetch when component mounts
+    refetchOnWindowFocus: true, // Refetch when window gains focus
+  });
+
+  const userApplication = userApplicationData;
 
   // Delete mutation
   const deleteMutation = useMutation({
@@ -144,7 +193,6 @@ const JobDetails = () => {
     return `$${job.budget.amount?.toLocaleString()}`;
   };
 
-  const isOwner = job?.posted_by?._id === user?.id;
   const canApply = isAuthenticated && isJunior() && !isOwner;
   const canEdit = isAuthenticated && isOwner;
 
@@ -522,7 +570,7 @@ const JobDetails = () => {
           </div>
 
           {/* Apply Section */}
-          {canApply && (
+          {canApply && !userApplication && (
             <div className="p-8 bg-gray-50 border-t">
               <button
                 onClick={() => navigate(`/jobs/${jobId}/apply`)}
@@ -530,6 +578,39 @@ const JobDetails = () => {
               >
                 Apply for this Job
               </button>
+            </div>
+          )}
+
+          {/* Already Applied Section */}
+          {canApply && userApplication && (
+            <div className="p-8 bg-green-50 border-t border-green-200">
+              <div className="text-center">
+                <div className="inline-flex items-center justify-center w-12 h-12 bg-green-100 rounded-full mb-3">
+                  <CheckCircle className="w-7 h-7 text-green-600" />
+                </div>
+                <h3 className="text-lg font-semibold text-gray-900 mb-1">
+                  You've Already Applied
+                </h3>
+                <p className="text-sm text-gray-600 mb-4">
+                  Application submitted on{" "}
+                  {new Date(userApplication.createdAt).toLocaleDateString()}
+                </p>
+                <div className="flex flex-col sm:flex-row gap-3 justify-center">
+                  <Link
+                    to={`/applications/${userApplication._id}`}
+                    className="inline-flex items-center justify-center px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+                  >
+                    <FileText className="w-4 h-4 mr-2" />
+                    View Application
+                  </Link>
+                  <Link
+                    to="/applications"
+                    className="inline-flex items-center justify-center px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium"
+                  >
+                    All Applications
+                  </Link>
+                </div>
+              </div>
             </div>
           )}
 

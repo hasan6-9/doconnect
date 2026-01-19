@@ -1,7 +1,9 @@
-// client/src/pages/AdminDashboard.js - PROFESSIONAL PRODUCTION VERSION WITH JOB & APPLICATION MANAGEMENT
+// client/src/pages/AdminDashboard.js - REAL-TIME ADMIN DASHBOARD WITH WEBSOCKET + POLLING
 import React, { useState, useEffect, useCallback } from "react";
 import { useAuth } from "../context/AuthContext";
 import { adminAPI } from "../api";
+import { useAdminSocket } from "../hooks/useAdminSocket";
+import { useRealtimeMetrics } from "../hooks/useRealtimeMetrics";
 import {
   Shield,
   CheckCircle,
@@ -10,13 +12,11 @@ import {
   User,
   FileText,
   Eye,
-  Filter,
   AlertTriangle,
   TrendingUp,
   Users,
   Award,
   Search,
-  Download,
   RefreshCw,
   ChevronRight,
   ChevronDown,
@@ -24,14 +24,9 @@ import {
   Activity,
   BarChart3,
   PieChart,
-  FileCheck,
   AlertCircle,
-  Bell,
   CheckSquare,
-  UserCheck,
-  Trash2,
   Calendar,
-  MapPin,
   Briefcase,
   GraduationCap,
   X,
@@ -39,11 +34,11 @@ import {
   Loader,
   Star,
   DollarSign,
-  Package,
-  MessageSquare,
   PlayCircle,
   PauseCircle,
   Ban,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
 
 const AdminDashboard = () => {
@@ -53,17 +48,33 @@ const AdminDashboard = () => {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
-  // Data states
-  const [dashboardData, setDashboardData] = useState(null);
+  // ============================================================================
+  // REAL-TIME CONNECTION & METRICS
+  // ============================================================================
+
+  // Socket.IO connection for real-time updates
+  const { socket, isConnected, connectionError } = useAdminSocket();
+
+  // Real-time metrics with polling fallback
+  const {
+    metrics: dashboardData,
+    loading: metricsLoading,
+    error: metricsError,
+    lastFetch,
+    refresh: refreshMetrics,
+  } = useRealtimeMetrics(socket, isConnected);
+
+  // ============================================================================
+  // EXISTING DATA STATES (Keep for other tabs)
+  // ============================================================================
+
   const [pendingVerifications, setPendingVerifications] = useState([]);
   const [allUsers, setAllUsers] = useState([]);
   const [verificationStats, setVerificationStats] = useState(null);
-  const [refreshInterval, setRefreshInterval] = useState(null);
 
   // Job management states
   const [allJobs, setAllJobs] = useState([]);
   const [selectedJobs, setSelectedJobs] = useState([]);
-  const [expandedJob, setExpandedJob] = useState(null);
   const [jobsPagination, setJobsPagination] = useState({
     page: 1,
     total: 0,
@@ -73,7 +84,6 @@ const AdminDashboard = () => {
   // Application management states
   const [allApplications, setAllApplications] = useState([]);
   const [selectedApplications, setSelectedApplications] = useState([]);
-  const [expandedApplication, setExpandedApplication] = useState(null);
   const [applicationsPagination, setApplicationsPagination] = useState({
     page: 1,
     total: 0,
@@ -93,139 +103,115 @@ const AdminDashboard = () => {
   const [selectedUsers, setSelectedUsers] = useState([]);
   const [expandedProfile, setExpandedProfile] = useState(null);
   const [showConfirmModal, setShowConfirmModal] = useState(null);
-  const [autoRefresh, setAutoRefresh] = useState(true);
 
-  // Fetch all data on mount
+  // ============================================================================
+  // REAL-TIME EVENT HANDLERS
+  // ============================================================================
+
   useEffect(() => {
-    if (isAdmin()) {
-      initialDataFetch();
-    }
-  }, [isAdmin]);
+    if (!socket || !isConnected) return;
 
-  // Auto-refresh every 30 seconds
-  useEffect(() => {
-    if (autoRefresh && isAdmin()) {
-      const interval = setInterval(() => {
-        silentRefresh();
-      }, 30000);
-      setRefreshInterval(interval);
-      return () => clearInterval(interval);
-    }
-  }, [autoRefresh, isAdmin]);
+    // Listen for user registration events
+    socket.on("admin:user:registered", (data) => {
+      console.log("🆕 New user registered:", data);
+      // Optionally show toast notification
+      setSuccess(`New user registered: ${data.name}`);
+      setTimeout(() => setSuccess(""), 3000);
+    });
 
-  // Fetch data when tab or filters change
-  useEffect(() => {
-    if (activeTab === "pending" && isAdmin()) {
-      fetchPendingVerifications();
-    } else if (activeTab === "users" && isAdmin()) {
-      fetchAllUsers();
-    } else if (activeTab === "jobs" && isAdmin()) {
-      fetchAllJobs();
-    } else if (activeTab === "applications" && isAdmin()) {
-      fetchAllApplications();
-    }
-  }, [filters, activeTab, isAdmin]);
+    // Listen for verification updates
+    socket.on("admin:verification:updated", (data) => {
+      console.log("✅ Verification updated:", data);
+    });
 
-  // Initial data fetch
-  const initialDataFetch = async () => {
-    setLoading(true);
-    try {
-      await Promise.all([fetchDashboardData(), fetchVerificationStats("30d")]);
-    } catch (err) {
-      console.error("Error in initial data fetch:", err);
-    } finally {
-      setLoading(false);
-    }
-  };
+    // Listen for new job postings
+    socket.on("admin:job:created", (data) => {
+      console.log("💼 New job created:", data);
+    });
 
-  // Silent refresh (no loading spinner)
-  const silentRefresh = async () => {
-    try {
-      await Promise.all([
-        fetchDashboardData(true),
-        fetchVerificationStats("30d", true),
-      ]);
-      if (activeTab === "pending") {
-        await fetchPendingVerifications(true);
-      } else if (activeTab === "users") {
-        await fetchAllUsers(true);
+    // Listen for new applications
+    socket.on("admin:application:submitted", (data) => {
+      console.log("📝 New application submitted:", data);
+    });
+
+    return () => {
+      socket.off("admin:user:registered");
+      socket.off("admin:verification:updated");
+      socket.off("admin:job:created");
+      socket.off("admin:application:submitted");
+    };
+  }, [socket, isConnected]);
+
+  // ============================================================================
+  // FETCH DATA FOR OTHER TABS (Keep existing logic)
+  // ============================================================================
+
+  // Fetch verification stats (keep for stats tab)
+  const fetchVerificationStats = useCallback(
+    async (timeframe = "30d", silent = false) => {
+      console.log("📊 Fetching verification stats...");
+      try {
+        const response = await adminAPI.getVerificationStats(timeframe);
+        console.log("✅ Verification stats received:", response.data);
+        setVerificationStats(response.data.data);
+      } catch (err) {
+        console.error("❌ Error fetching verification stats:", err);
+        console.error("Error details:", err.response?.data);
       }
-    } catch (err) {
-      console.error("Silent refresh error:", err);
-    }
-  };
+    },
+    []
+  );
 
-  // API Functions
-  const fetchDashboardData = async (silent = false) => {
-    try {
-      if (!silent) setLoading(true);
-      const response = await adminAPI.getDashboard();
-      setDashboardData(response.data.data);
-      setError("");
-    } catch (err) {
-      console.error("Error fetching dashboard:", err);
-      if (!silent)
-        setError(
-          err.response?.data?.message || "Failed to fetch dashboard data"
-        );
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  };
+  const fetchPendingVerifications = useCallback(
+    async (silent = false) => {
+      try {
+        if (!silent) setLoading(true);
+        const params = {
+          type: filters.type !== "all" ? filters.type : undefined,
+          page: filters.page,
+          limit: filters.limit,
+        };
 
-  const fetchVerificationStats = async (timeframe = "30d", silent = false) => {
-    try {
-      const response = await adminAPI.getVerificationStats(timeframe);
-      setVerificationStats(response.data.data);
-    } catch (err) {
-      console.error("Error fetching verification stats:", err);
-    }
-  };
+        const response = await adminAPI.getPendingVerifications(params);
+        setPendingVerifications(response.data.data);
+        setError("");
+      } catch (err) {
+        console.error("Error fetching pending verifications:", err);
+        if (!silent)
+          setError(
+            err.response?.data?.message || "Failed to fetch verifications"
+          );
+      } finally {
+        if (!silent) setLoading(false);
+      }
+    },
+    [filters.type, filters.page, filters.limit]
+  );
 
-  const fetchPendingVerifications = async (silent = false) => {
-    try {
-      if (!silent) setLoading(true);
-      const params = {
-        type: filters.type !== "all" ? filters.type : undefined,
-        page: filters.page,
-        limit: filters.limit,
-      };
+  const fetchAllUsers = useCallback(
+    async (silent = false) => {
+      try {
+        if (!silent) setLoading(true);
 
-      const response = await adminAPI.getPendingVerifications(params);
-      setPendingVerifications(response.data.data);
-      setError("");
-    } catch (err) {
-      console.error("Error fetching pending verifications:", err);
-      if (!silent)
-        setError(
-          err.response?.data?.message || "Failed to fetch verifications"
-        );
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  };
+        // Since there's no getAllUsers endpoint, we'll fetch pending and use search
+        // You might want to add a GET /api/admin/users endpoint in the backend
+        const response = await adminAPI.getPendingVerifications({
+          type: "all",
+          page: filters.page,
+          limit: 50, // Get more users
+        });
 
-  const fetchAllUsers = async (silent = false) => {
-    try {
-      if (!silent) setLoading(true);
-
-      // Since there's no getAllUsers endpoint, we'll fetch pending and use search
-      // You might want to add a GET /api/admin/users endpoint in the backend
-      const response = await adminAPI.getPendingVerifications({
-        type: "all",
-        page: filters.page,
-        limit: 50, // Get more users
-      });
-
-      setAllUsers(response.data.data);
-      setError("");
-    } catch (err) {
-      console.error("Error fetching all users:", err);
-      if (!silent) setError("Failed to fetch users");
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  };
+        setAllUsers(response.data.data);
+        setError("");
+      } catch (err) {
+        console.error("Error fetching all users:", err);
+        if (!silent) setError("Failed to fetch users");
+      } finally {
+        if (!silent) setLoading(false);
+      }
+    },
+    [filters.page]
+  );
 
   const verifyProfile = async (
     userId,
@@ -266,7 +252,7 @@ const AdminDashboard = () => {
       // Refresh data
       await Promise.all([
         fetchPendingVerifications(true),
-        fetchDashboardData(true),
+        refreshMetrics(),
         fetchVerificationStats("30d", true),
       ]);
 
@@ -307,7 +293,7 @@ const AdminDashboard = () => {
       // Refresh all data
       await Promise.all([
         fetchPendingVerifications(),
-        fetchDashboardData(true),
+        refreshMetrics(),
         fetchVerificationStats("30d", true),
       ]);
 
@@ -325,28 +311,31 @@ const AdminDashboard = () => {
   // JOB MANAGEMENT API FUNCTIONS
   // ============================================================================
 
-  const fetchAllJobs = async (silent = false) => {
-    try {
-      if (!silent) setLoading(true);
-      const params = {
-        page: filters.page,
-        limit: filters.limit,
-        status: filters.status !== "all" ? filters.status : undefined,
-        search: filters.search || undefined,
-      };
+  const fetchAllJobs = useCallback(
+    async (silent = false) => {
+      try {
+        if (!silent) setLoading(true);
+        const params = {
+          page: filters.page,
+          limit: filters.limit,
+          status: filters.status !== "all" ? filters.status : undefined,
+          search: filters.search || undefined,
+        };
 
-      const response = await adminAPI.getAllJobs(params);
-      setAllJobs(response.data.data);
-      setJobsPagination(response.data.pagination);
-      setError("");
-    } catch (err) {
-      console.error("Error fetching jobs:", err);
-      if (!silent)
-        setError(err.response?.data?.message || "Failed to fetch jobs");
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  };
+        const response = await adminAPI.getAllJobs(params);
+        setAllJobs(response.data.data);
+        setJobsPagination(response.data.pagination);
+        setError("");
+      } catch (err) {
+        console.error("Error fetching jobs:", err);
+        if (!silent)
+          setError(err.response?.data?.message || "Failed to fetch jobs");
+      } finally {
+        if (!silent) setLoading(false);
+      }
+    },
+    [filters.page, filters.limit, filters.status, filters.search]
+  );
 
   const handleJobAction = async (jobId, action, reason = "") => {
     setShowConfirmModal(null);
@@ -398,28 +387,60 @@ const AdminDashboard = () => {
   // APPLICATION MANAGEMENT API FUNCTIONS
   // ============================================================================
 
-  const fetchAllApplications = async (silent = false) => {
-    try {
-      if (!silent) setLoading(true);
-      const params = {
-        page: filters.page,
-        limit: filters.limit,
-        status: filters.status !== "all" ? filters.status : undefined,
-        search: filters.search || undefined,
-      };
+  const fetchAllApplications = useCallback(
+    async (silent = false) => {
+      try {
+        if (!silent) setLoading(true);
+        const params = {
+          page: filters.page,
+          limit: filters.limit,
+          status: filters.status !== "all" ? filters.status : undefined,
+          search: filters.search || undefined,
+        };
 
-      const response = await adminAPI.getAllApplications(params);
-      setAllApplications(response.data.data);
-      setApplicationsPagination(response.data.pagination);
-      setError("");
-    } catch (err) {
-      console.error("Error fetching applications:", err);
-      if (!silent)
-        setError(err.response?.data?.message || "Failed to fetch applications");
-    } finally {
-      if (!silent) setLoading(false);
+        const response = await adminAPI.getAllApplications(params);
+        setAllApplications(response.data.data);
+        setApplicationsPagination(response.data.pagination);
+        setError("");
+      } catch (err) {
+        console.error("Error fetching applications:", err);
+        if (!silent)
+          setError(
+            err.response?.data?.message || "Failed to fetch applications"
+          );
+      } finally {
+        if (!silent) setLoading(false);
+      }
+    },
+    [filters.page, filters.limit, filters.status, filters.search]
+  );
+
+  // Fetch data when tab or filters change (moved here after function definitions)
+  useEffect(() => {
+    console.log("🔄 Tab changed to:", activeTab, "isAdmin:", isAdmin());
+
+    if (activeTab === "pending" && isAdmin()) {
+      fetchPendingVerifications();
+    } else if (activeTab === "users" && isAdmin()) {
+      fetchAllUsers();
+    } else if (activeTab === "jobs" && isAdmin()) {
+      fetchAllJobs();
+    } else if (activeTab === "applications" && isAdmin()) {
+      fetchAllApplications();
+    } else if (activeTab === "stats" && isAdmin()) {
+      console.log("📊 Stats tab activated, fetching verification stats...");
+      fetchVerificationStats();
     }
-  };
+  }, [
+    filters,
+    activeTab,
+    isAdmin,
+    fetchPendingVerifications,
+    fetchAllUsers,
+    fetchAllJobs,
+    fetchAllApplications,
+    fetchVerificationStats,
+  ]);
 
   const handleResolveDispute = async (
     applicationId,
@@ -473,7 +494,7 @@ const AdminDashboard = () => {
     }
   };
 
-  // UI Components
+  // UI Components - Refined Design
   const MetricCard = ({
     title,
     value,
@@ -484,25 +505,28 @@ const AdminDashboard = () => {
     onClick,
   }) => (
     <div
-      className={`bg-white rounded-lg shadow-sm border border-gray-200 p-6 hover:shadow-md transition-all ${
-        onClick ? "cursor-pointer" : ""
+      className={`bg-white rounded-xl border border-gray-200 p-6 hover:border-gray-300 transition-all duration-200 ${
+        onClick ? "cursor-pointer hover:shadow-sm" : ""
       }`}
       onClick={onClick}
+      style={{ boxShadow: "none" }}
     >
-      <div className="flex items-center justify-between">
+      <div className="flex items-start justify-between">
         <div className="flex-1">
-          <p className="text-sm text-gray-600 mb-1">{title}</p>
-          <p className="text-3xl font-bold text-gray-900">{value}</p>
-          {subtitle && <p className="text-sm text-gray-500 mt-1">{subtitle}</p>}
+          <p className="text-xs font-medium uppercase tracking-wide text-gray-500 mb-2">
+            {title}
+          </p>
+          <p className="text-3xl font-semibold text-gray-900 mb-1">{value}</p>
+          {subtitle && <p className="text-sm text-gray-600">{subtitle}</p>}
           {trend && (
             <div className="flex items-center mt-2">
-              <TrendingUp className="w-4 h-4 text-green-500 mr-1" />
-              <span className="text-sm text-green-600">{trend}</span>
+              <TrendingUp className="w-4 h-4 text-green-600 mr-1" />
+              <span className="text-sm text-green-700">{trend}</span>
             </div>
           )}
         </div>
-        <div className={`p-4 rounded-full bg-${color}-100`}>
-          <Icon className={`w-8 h-8 text-${color}-600`} />
+        <div className="p-3 rounded-lg bg-gray-50">
+          <Icon className="w-5 h-5 text-gray-600" />
         </div>
       </div>
     </div>
@@ -510,17 +534,22 @@ const AdminDashboard = () => {
 
   const StatusBadge = ({ status }) => {
     const colors = {
-      verified: "bg-green-100 text-green-800 border-green-200",
-      pending: "bg-yellow-100 text-yellow-800 border-yellow-200",
-      rejected: "bg-red-100 text-red-800 border-red-200",
-      active: "bg-green-100 text-green-800 border-green-200",
-      inactive: "bg-gray-100 text-gray-800 border-gray-200",
-      suspended: "bg-red-100 text-red-800 border-red-200",
+      verified: "bg-green-50 text-green-700 border-green-200",
+      pending: "bg-amber-50 text-amber-700 border-amber-200",
+      rejected: "bg-red-50 text-red-700 border-red-200",
+      active: "bg-blue-50 text-blue-700 border-blue-200",
+      inactive: "bg-gray-50 text-gray-600 border-gray-200",
+      suspended: "bg-red-50 text-red-700 border-red-200",
+      submitted: "bg-blue-50 text-blue-600 border-blue-200",
+      under_review: "bg-purple-50 text-purple-700 border-purple-200",
+      accepted: "bg-green-50 text-green-700 border-green-200",
+      completed: "bg-blue-50 text-blue-700 border-blue-200",
+      closed: "bg-gray-50 text-gray-600 border-gray-200",
     };
 
     return (
       <span
-        className={`px-3 py-1 rounded-full text-xs font-semibold border ${
+        className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium border ${
           colors[status] || colors.pending
         }`}
       >
@@ -576,31 +605,59 @@ const AdminDashboard = () => {
 
   const OverviewTab = () => (
     <div className="space-y-6">
-      {/* Auto-refresh toggle */}
-      <div className="flex items-center justify-between bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-        <div className="flex items-center space-x-2">
-          <Activity
-            className={`w-5 h-5 ${
-              autoRefresh ? "text-green-600 animate-pulse" : "text-gray-400"
-            }`}
-          />
-          <span className="text-sm font-medium text-gray-700">
-            Auto-refresh {autoRefresh ? "enabled" : "disabled"} (30s)
-          </span>
+      {/* Real-Time Connection Status */}
+      <div className="flex items-center justify-between bg-white rounded-xl border border-gray-200 p-4">
+        <div className="flex items-center space-x-4">
+          {/* Connection Status */}
+          <div className="flex items-center space-x-2">
+            {isConnected ? (
+              <>
+                <Wifi className="w-4 h-4 text-green-600 animate-pulse" />
+                <span className="text-sm font-normal text-green-700">
+                  Live Updates Active
+                </span>
+              </>
+            ) : (
+              <>
+                <WifiOff className="w-4 h-4 text-amber-600" />
+                <span className="text-sm font-normal text-amber-700">
+                  Polling Mode (30s)
+                </span>
+              </>
+            )}
+          </div>
+
+          {/* Last Update Time */}
+          {lastFetch && (
+            <div className="flex items-center space-x-2 text-xs text-gray-500">
+              <Clock className="w-4 h-4" />
+              <span>Updated {new Date(lastFetch).toLocaleTimeString()}</span>
+            </div>
+          )}
+
+          {/* Connection Error */}
+          {connectionError && (
+            <div className="flex items-center space-x-2 text-xs text-red-700">
+              <AlertCircle className="w-4 h-4" />
+              <span>{connectionError}</span>
+            </div>
+          )}
         </div>
+
+        {/* Manual Refresh Button */}
         <button
-          onClick={() => setAutoRefresh(!autoRefresh)}
-          className={`px-4 py-2 rounded-md text-sm font-medium ${
-            autoRefresh
-              ? "bg-green-100 text-green-700"
-              : "bg-gray-100 text-gray-700"
-          }`}
+          onClick={refreshMetrics}
+          disabled={metricsLoading}
+          className="flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 hover:border-blue-300 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-150"
         >
-          {autoRefresh ? "Disable" : "Enable"}
+          <RefreshCw
+            className={`w-4 h-4 ${metricsLoading ? "animate-spin" : ""}`}
+          />
+          <span>Refresh</span>
         </button>
       </div>
 
-      {loading && !dashboardData ? (
+      {metricsLoading && !dashboardData ? (
         <div className="flex items-center justify-center py-20">
           <div className="text-center">
             <Loader className="w-12 h-12 animate-spin text-blue-600 mx-auto mb-4" />
@@ -624,7 +681,6 @@ const AdminDashboard = () => {
               value={dashboardData.metrics?.verification?.verified || 0}
               icon={CheckCircle}
               color="green"
-              trend="+12% this month"
             />
             <MetricCard
               title="Pending Verification"
@@ -789,7 +845,7 @@ const AdminDashboard = () => {
           <AlertCircle className="w-16 h-16 text-gray-400 mx-auto mb-4" />
           <p className="text-gray-600 mb-4">No dashboard data available</p>
           <button
-            onClick={fetchDashboardData}
+            onClick={refreshMetrics}
             className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
           >
             Retry
@@ -802,126 +858,122 @@ const AdminDashboard = () => {
   const PendingVerificationsTab = () => (
     <div className="space-y-6">
       {/* Enhanced Filters */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-        <div className="flex flex-col space-y-4">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-            <div className="flex flex-col sm:flex-row gap-4 flex-1">
-              <div className="relative flex-1">
-                <Search className="w-5 h-5 absolute left-3 top-3 text-gray-400" />
-                <input
-                  type="text"
-                  placeholder="Search by name, email, or license..."
-                  value={filters.search}
-                  onChange={(e) =>
-                    setFilters((prev) => ({
-                      ...prev,
-                      search: e.target.value,
-                      page: 1,
-                    }))
-                  }
-                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
+      <div className="bg-white rounded-xl border border-gray-200 p-5">
+        <div className="flex flex-col lg:flex-row lg:items-center gap-4">
+          {/* Search Input */}
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Search by name, email, or license..."
+              value={filters.search}
+              onChange={(e) =>
+                setFilters((prev) => ({
+                  ...prev,
+                  search: e.target.value,
+                  page: 1,
+                }))
+              }
+              className="w-full pl-10 pr-4 py-2.5 text-sm border border-gray-200 rounded-lg bg-gray-50 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-150 placeholder:text-gray-400"
+            />
+          </div>
 
-              <select
-                value={filters.type}
-                onChange={(e) =>
-                  setFilters((prev) => ({
-                    ...prev,
-                    type: e.target.value,
-                    page: 1,
-                  }))
-                }
-                className="border border-gray-300 rounded-md px-4 py-2 focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="all">All Types</option>
-                <option value="identity">Identity</option>
-                <option value="medical_license">Medical License</option>
-                <option value="background_check">Background Check</option>
-              </select>
+          {/* Type Filter */}
+          <select
+            value={filters.type}
+            onChange={(e) =>
+              setFilters((prev) => ({
+                ...prev,
+                type: e.target.value,
+                page: 1,
+              }))
+            }
+            className="px-4 py-2.5 text-sm font-medium border border-gray-200 rounded-lg bg-white hover:bg-gray-50 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-150 min-w-[160px]"
+          >
+            <option value="all">All Types</option>
+            <option value="identity">Identity</option>
+            <option value="medical_license">Medical License</option>
+            <option value="background_check">Background Check</option>
+          </select>
 
-              <select
-                value={filters.limit}
-                onChange={(e) =>
-                  setFilters((prev) => ({
-                    ...prev,
-                    limit: parseInt(e.target.value),
-                    page: 1,
-                  }))
-                }
-                className="border border-gray-300 rounded-md px-4 py-2 focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="10">10 per page</option>
-                <option value="20">20 per page</option>
-                <option value="50">50 per page</option>
-              </select>
+          {/* Per Page Filter */}
+          <select
+            value={filters.limit}
+            onChange={(e) =>
+              setFilters((prev) => ({
+                ...prev,
+                limit: parseInt(e.target.value),
+                page: 1,
+              }))
+            }
+            className="px-4 py-2.5 text-sm font-medium border border-gray-200 rounded-lg bg-white hover:bg-gray-50 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-150 min-w-[130px]"
+          >
+            <option value="10">10 per page</option>
+            <option value="20">20 per page</option>
+            <option value="50">50 per page</option>
+          </select>
+
+          {/* Refresh Button */}
+          <button
+            onClick={() => fetchPendingVerifications()}
+            disabled={loading}
+            className="flex items-center justify-center space-x-2 px-4 py-2.5 text-sm font-medium border border-gray-200 rounded-lg bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-150 min-w-[110px]"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+            <span>Refresh</span>
+          </button>
+        </div>
+
+        {/* Bulk Actions Bar */}
+        {selectedUsers.length > 0 && (
+          <div className="flex items-center justify-between bg-blue-50 border border-blue-200 p-4 rounded-lg mt-4">
+            <div className="flex items-center space-x-4">
+              <CheckSquare className="w-5 h-5 text-blue-600" />
+              <span className="text-blue-900 font-medium">
+                {selectedUsers.length} user
+                {selectedUsers.length !== 1 ? "s" : ""} selected
+              </span>
             </div>
-
-            <div className="flex items-center space-x-2">
+            <div className="flex space-x-2">
               <button
-                onClick={() => fetchPendingVerifications()}
+                onClick={() =>
+                  setShowConfirmModal({
+                    type: "bulk-approve",
+                    title: "Bulk Approve",
+                    message: `Are you sure you want to approve ${selectedUsers.length} user(s)?`,
+                    action: () => bulkVerify("verified"),
+                  })
+                }
+                className="flex items-center space-x-2 bg-green-50 text-green-700 px-4 py-2.5 rounded-lg border border-green-200 hover:bg-green-100 hover:border-green-300 focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition-all duration-150 font-medium text-sm disabled:opacity-50"
                 disabled={loading}
-                className="flex items-center space-x-2 px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 font-medium"
               >
-                <RefreshCw
-                  className={`w-4 h-4 ${loading ? "animate-spin" : ""}`}
-                />
-                <span>Refresh</span>
+                <Check className="w-4 h-4" />
+                <span>Approve All</span>
+              </button>
+              <button
+                onClick={() =>
+                  setShowConfirmModal({
+                    type: "bulk-reject",
+                    title: "Bulk Reject",
+                    message: `Are you sure you want to reject ${selectedUsers.length} user(s)?`,
+                    action: () => bulkVerify("rejected"),
+                  })
+                }
+                className="flex items-center space-x-2 bg-red-50 text-red-700 px-4 py-2.5 rounded-lg border border-red-200 hover:bg-red-100 hover:border-red-300 focus:ring-2 focus:ring-red-500 focus:ring-offset-2 transition-all duration-150 font-medium text-sm disabled:opacity-50"
+                disabled={loading}
+              >
+                <X className="w-4 h-4" />
+                <span>Reject All</span>
+              </button>
+              <button
+                onClick={() => setSelectedUsers([])}
+                className="bg-gray-200 text-gray-700 px-4 py-2 rounded-md hover:bg-gray-300 font-medium"
+              >
+                Clear
               </button>
             </div>
           </div>
-
-          {/* Bulk Actions Bar */}
-          {selectedUsers.length > 0 && (
-            <div className="flex items-center justify-between bg-blue-50 border-2 border-blue-200 p-4 rounded-lg">
-              <div className="flex items-center space-x-4">
-                <CheckSquare className="w-5 h-5 text-blue-600" />
-                <span className="text-blue-900 font-semibold">
-                  {selectedUsers.length} user
-                  {selectedUsers.length !== 1 ? "s" : ""} selected
-                </span>
-              </div>
-              <div className="flex space-x-2">
-                <button
-                  onClick={() =>
-                    setShowConfirmModal({
-                      type: "bulk-approve",
-                      title: "Bulk Approve",
-                      message: `Are you sure you want to approve ${selectedUsers.length} user(s)?`,
-                      action: () => bulkVerify("verified"),
-                    })
-                  }
-                  className="flex items-center space-x-2 bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 font-medium disabled:opacity-50"
-                  disabled={loading}
-                >
-                  <Check className="w-4 h-4" />
-                  <span>Approve All</span>
-                </button>
-                <button
-                  onClick={() =>
-                    setShowConfirmModal({
-                      type: "bulk-reject",
-                      title: "Bulk Reject",
-                      message: `Are you sure you want to reject ${selectedUsers.length} user(s)?`,
-                      action: () => bulkVerify("rejected"),
-                    })
-                  }
-                  className="flex items-center space-x-2 bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700 font-medium disabled:opacity-50"
-                  disabled={loading}
-                >
-                  <X className="w-4 h-4" />
-                  <span>Reject All</span>
-                </button>
-                <button
-                  onClick={() => setSelectedUsers([])}
-                  className="bg-gray-200 text-gray-700 px-4 py-2 rounded-md hover:bg-gray-300 font-medium"
-                >
-                  Clear
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
+        )}
       </div>
 
       {/* Verification Queue */}
@@ -966,7 +1018,7 @@ const AdminDashboard = () => {
             {pendingVerifications.map((profile) => (
               <div
                 key={profile._id}
-                className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow"
+                className="bg-white rounded-xl border border-gray-200 p-6 hover:border-gray-300 hover:shadow-sm transition-all duration-200"
               >
                 <div className="flex items-start space-x-4">
                   <input
@@ -984,7 +1036,7 @@ const AdminDashboard = () => {
                     className="mt-1 w-5 h-5 text-blue-600 focus:ring-blue-500 border-gray-300 rounded cursor-pointer"
                   />
 
-                  <div className="w-16 h-16 bg-gradient-to-br from-blue-400 to-blue-600 rounded-full overflow-hidden flex-shrink-0">
+                  <div className="w-16 h-16 bg-gradient-to-br from-gray-100 to-gray-200 rounded-full overflow-hidden flex-shrink-0">
                     {profile.profilePhoto?.url ? (
                       <img
                         src={profile.profilePhoto.url}
@@ -1144,7 +1196,7 @@ const AdminDashboard = () => {
                                 ),
                             })
                           }
-                          className="flex items-center space-x-2 bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 font-medium disabled:opacity-50"
+                          className="flex items-center space-x-2 bg-green-50 text-green-700 px-4 py-2.5 rounded-lg border border-green-200 hover:bg-green-100 hover:border-green-300 focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition-all duration-150 font-medium text-sm disabled:opacity-50"
                           disabled={loading}
                         >
                           <CheckCircle className="w-4 h-4" />
@@ -1165,7 +1217,7 @@ const AdminDashboard = () => {
                                 ),
                             })
                           }
-                          className="flex items-center space-x-2 bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700 font-medium disabled:opacity-50"
+                          className="flex items-center space-x-2 bg-red-50 text-red-700 px-4 py-2.5 rounded-lg border border-red-200 hover:bg-red-100 hover:border-red-300 focus:ring-2 focus:ring-red-500 focus:ring-offset-2 transition-all duration-150 font-medium text-sm disabled:opacity-50"
                           disabled={loading}
                         >
                           <XCircle className="w-4 h-4" />
@@ -1530,137 +1582,135 @@ const AdminDashboard = () => {
   const JobManagementTab = () => (
     <div className="space-y-6">
       {/* Filters */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-        <div className="flex flex-col space-y-4">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-            <div className="flex flex-col sm:flex-row gap-4 flex-1">
-              <div className="relative flex-1">
-                <Search className="w-5 h-5 absolute left-3 top-3 text-gray-400" />
-                <input
-                  type="text"
-                  placeholder="Search jobs by title, category..."
-                  value={filters.search}
-                  onChange={(e) =>
-                    setFilters((prev) => ({
-                      ...prev,
-                      search: e.target.value,
-                      page: 1,
-                    }))
-                  }
-                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-
-              <select
-                value={filters.status}
-                onChange={(e) =>
-                  setFilters((prev) => ({
-                    ...prev,
-                    status: e.target.value,
-                    page: 1,
-                  }))
-                }
-                className="border border-gray-300 rounded-md px-4 py-2 focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="all">All Status</option>
-                <option value="active">Active</option>
-                <option value="paused">Paused</option>
-                <option value="closed">Closed</option>
-                <option value="draft">Draft</option>
-              </select>
-
-              <select
-                value={filters.limit}
-                onChange={(e) =>
-                  setFilters((prev) => ({
-                    ...prev,
-                    limit: parseInt(e.target.value),
-                    page: 1,
-                  }))
-                }
-                className="border border-gray-300 rounded-md px-4 py-2 focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="10">10 per page</option>
-                <option value="20">20 per page</option>
-                <option value="50">50 per page</option>
-              </select>
-            </div>
-
-            <button
-              onClick={() => fetchAllJobs()}
-              disabled={loading}
-              className="flex items-center space-x-2 px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 font-medium"
-            >
-              <RefreshCw
-                className={`w-4 h-4 ${loading ? "animate-spin" : ""}`}
-              />
-              <span>Refresh</span>
-            </button>
+      <div className="bg-white rounded-xl border border-gray-200 p-5">
+        <div className="flex flex-col lg:flex-row lg:items-center gap-4">
+          {/* Search Input */}
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Search jobs by title, category..."
+              value={filters.search}
+              onChange={(e) =>
+                setFilters((prev) => ({
+                  ...prev,
+                  search: e.target.value,
+                  page: 1,
+                }))
+              }
+              className="w-full pl-10 pr-4 py-2.5 text-sm border border-gray-200 rounded-lg bg-gray-50 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-150 placeholder:text-gray-400"
+            />
           </div>
 
-          {/* Bulk Actions Bar */}
-          {selectedJobs.length > 0 && (
-            <div className="flex items-center justify-between bg-blue-50 border-2 border-blue-200 p-4 rounded-lg">
-              <div className="flex items-center space-x-4">
-                <CheckSquare className="w-5 h-5 text-blue-600" />
-                <span className="text-blue-900 font-semibold">
-                  {selectedJobs.length} job
-                  {selectedJobs.length !== 1 ? "s" : ""} selected
-                </span>
-              </div>
-              <div className="flex space-x-2">
-                <button
-                  onClick={() =>
-                    setShowConfirmModal({
-                      type: "bulk-activate",
-                      title: "Bulk Activate Jobs",
-                      message: `Activate ${selectedJobs.length} job(s)?`,
-                      action: () => handleBulkJobAction("active"),
-                    })
-                  }
-                  className="flex items-center space-x-2 bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 font-medium"
-                >
-                  <PlayCircle className="w-4 h-4" />
-                  <span>Activate</span>
-                </button>
-                <button
-                  onClick={() =>
-                    setShowConfirmModal({
-                      type: "bulk-pause",
-                      title: "Bulk Pause Jobs",
-                      message: `Pause ${selectedJobs.length} job(s)?`,
-                      action: () => handleBulkJobAction("paused"),
-                    })
-                  }
-                  className="flex items-center space-x-2 bg-yellow-600 text-white px-4 py-2 rounded-md hover:bg-yellow-700 font-medium"
-                >
-                  <PauseCircle className="w-4 h-4" />
-                  <span>Pause</span>
-                </button>
-                <button
-                  onClick={() =>
-                    setShowConfirmModal({
-                      type: "bulk-close",
-                      title: "Bulk Close Jobs",
-                      message: `Close ${selectedJobs.length} job(s)?`,
-                      action: () => handleBulkJobAction("closed"),
-                    })
-                  }
-                  className="flex items-center space-x-2 bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700 font-medium"
-                >
-                  <Ban className="w-4 h-4" />
-                  <span>Close</span>
-                </button>
-                <button
-                  onClick={() => setSelectedJobs([])}
-                  className="bg-gray-200 text-gray-700 px-4 py-2 rounded-md hover:bg-gray-300 font-medium"
-                >
-                  Clear
-                </button>
-              </div>
-            </div>
-          )}
+          {/* Status Filter */}
+          <select
+            value={filters.status}
+            onChange={(e) =>
+              setFilters((prev) => ({
+                ...prev,
+                status: e.target.value,
+                page: 1,
+              }))
+            }
+            className="px-4 py-2.5 text-sm font-medium border border-gray-200 rounded-lg bg-white hover:bg-gray-50 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-150 min-w-[140px]"
+          >
+            <option value="all">All Status</option>
+            <option value="active">Active</option>
+            <option value="paused">Paused</option>
+            <option value="closed">Closed</option>
+            <option value="draft">Draft</option>
+          </select>
+
+          {/* Per Page Filter */}
+          <select
+            value={filters.limit}
+            onChange={(e) =>
+              setFilters((prev) => ({
+                ...prev,
+                limit: parseInt(e.target.value),
+                page: 1,
+              }))
+            }
+            className="px-4 py-2.5 text-sm font-medium border border-gray-200 rounded-lg bg-white hover:bg-gray-50 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-150 min-w-[130px]"
+          >
+            <option value="10">10 per page</option>
+            <option value="20">20 per page</option>
+            <option value="50">50 per page</option>
+          </select>
+
+          {/* Refresh Button */}
+          <button
+            onClick={() => fetchAllJobs()}
+            disabled={loading}
+            className="flex items-center justify-center space-x-2 px-4 py-2.5 text-sm font-medium border border-gray-200 rounded-lg bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-150 min-w-[110px]"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+            <span>Refresh</span>
+          </button>
         </div>
+
+        {/* Bulk Actions Bar */}
+        {selectedJobs.length > 0 && (
+          <div className="flex items-center justify-between bg-blue-50 border border-blue-200 p-4 rounded-lg mt-4">
+            <div className="flex items-center space-x-4">
+              <CheckSquare className="w-5 h-5 text-blue-600" />
+              <span className="text-blue-900 font-medium">
+                {selectedJobs.length} job
+                {selectedJobs.length !== 1 ? "s" : ""} selected
+              </span>
+            </div>
+            <div className="flex space-x-2">
+              <button
+                onClick={() =>
+                  setShowConfirmModal({
+                    type: "bulk-activate",
+                    title: "Bulk Activate Jobs",
+                    message: `Activate ${selectedJobs.length} job(s)?`,
+                    action: () => handleBulkJobAction("active"),
+                  })
+                }
+                className="flex items-center space-x-2 bg-green-50 text-green-700 px-4 py-2.5 rounded-lg border border-green-200 hover:bg-green-100 hover:border-green-300 focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition-all duration-150 font-medium text-sm"
+              >
+                <PlayCircle className="w-4 h-4" />
+                <span>Activate</span>
+              </button>
+              <button
+                onClick={() =>
+                  setShowConfirmModal({
+                    type: "bulk-pause",
+                    title: "Bulk Pause Jobs",
+                    message: `Pause ${selectedJobs.length} job(s)?`,
+                    action: () => handleBulkJobAction("paused"),
+                  })
+                }
+                className="flex items-center space-x-2 bg-amber-50 text-amber-700 px-4 py-2.5 rounded-lg border border-amber-200 hover:bg-amber-100 hover:border-amber-300 focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 transition-all duration-150 font-medium text-sm"
+              >
+                <PauseCircle className="w-4 h-4" />
+                <span>Pause</span>
+              </button>
+              <button
+                onClick={() =>
+                  setShowConfirmModal({
+                    type: "bulk-close",
+                    title: "Bulk Close Jobs",
+                    message: `Close ${selectedJobs.length} job(s)?`,
+                    action: () => handleBulkJobAction("closed"),
+                  })
+                }
+                className="flex items-center space-x-2 bg-red-50 text-red-700 px-4 py-2.5 rounded-lg border border-red-200 hover:bg-red-100 hover:border-red-300 focus:ring-2 focus:ring-red-500 focus:ring-offset-2 transition-all duration-150 font-medium text-sm"
+              >
+                <Ban className="w-4 h-4" />
+                <span>Close</span>
+              </button>
+              <button
+                onClick={() => setSelectedJobs([])}
+                className="bg-gray-200 text-gray-700 px-4 py-2 rounded-md hover:bg-gray-300 font-medium"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Jobs List */}
@@ -1894,76 +1944,74 @@ const AdminDashboard = () => {
   const ApplicationManagementTab = () => (
     <div className="space-y-6">
       {/* Filters */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-        <div className="flex flex-col space-y-4">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-            <div className="flex flex-col sm:flex-row gap-4 flex-1">
-              <div className="relative flex-1">
-                <Search className="w-5 h-5 absolute left-3 top-3 text-gray-400" />
-                <input
-                  type="text"
-                  placeholder="Search by applicant or job..."
-                  value={filters.search}
-                  onChange={(e) =>
-                    setFilters((prev) => ({
-                      ...prev,
-                      search: e.target.value,
-                      page: 1,
-                    }))
-                  }
-                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-
-              <select
-                value={filters.status}
-                onChange={(e) =>
-                  setFilters((prev) => ({
-                    ...prev,
-                    status: e.target.value,
-                    page: 1,
-                  }))
-                }
-                className="border border-gray-300 rounded-md px-4 py-2 focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="all">All Status</option>
-                <option value="submitted">Submitted</option>
-                <option value="under_review">Under Review</option>
-                <option value="shortlisted">Shortlisted</option>
-                <option value="interview_scheduled">Interview Scheduled</option>
-                <option value="accepted">Accepted</option>
-                <option value="rejected">Rejected</option>
-                <option value="withdrawn">Withdrawn</option>
-              </select>
-
-              <select
-                value={filters.limit}
-                onChange={(e) =>
-                  setFilters((prev) => ({
-                    ...prev,
-                    limit: parseInt(e.target.value),
-                    page: 1,
-                  }))
-                }
-                className="border border-gray-300 rounded-md px-4 py-2 focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="10">10 per page</option>
-                <option value="20">20 per page</option>
-                <option value="50">50 per page</option>
-              </select>
-            </div>
-
-            <button
-              onClick={() => fetchAllApplications()}
-              disabled={loading}
-              className="flex items-center space-x-2 px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 font-medium"
-            >
-              <RefreshCw
-                className={`w-4 h-4 ${loading ? "animate-spin" : ""}`}
-              />
-              <span>Refresh</span>
-            </button>
+      <div className="bg-white rounded-xl border border-gray-200 p-5">
+        <div className="flex flex-col lg:flex-row lg:items-center gap-4">
+          {/* Search Input */}
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Search by applicant or job..."
+              value={filters.search}
+              onChange={(e) =>
+                setFilters((prev) => ({
+                  ...prev,
+                  search: e.target.value,
+                  page: 1,
+                }))
+              }
+              className="w-full pl-10 pr-4 py-2.5 text-sm border border-gray-200 rounded-lg bg-gray-50 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-150 placeholder:text-gray-400"
+            />
           </div>
+
+          {/* Status Filter */}
+          <select
+            value={filters.status}
+            onChange={(e) =>
+              setFilters((prev) => ({
+                ...prev,
+                status: e.target.value,
+                page: 1,
+              }))
+            }
+            className="px-4 py-2.5 text-sm font-medium border border-gray-200 rounded-lg bg-white hover:bg-gray-50 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-150 min-w-[140px]"
+          >
+            <option value="all">All Status</option>
+            <option value="submitted">Submitted</option>
+            <option value="under_review">Under Review</option>
+            <option value="shortlisted">Shortlisted</option>
+            <option value="interview_scheduled">Interview Scheduled</option>
+            <option value="accepted">Accepted</option>
+            <option value="rejected">Rejected</option>
+            <option value="withdrawn">Withdrawn</option>
+          </select>
+
+          {/* Per Page Filter */}
+          <select
+            value={filters.limit}
+            onChange={(e) =>
+              setFilters((prev) => ({
+                ...prev,
+                limit: parseInt(e.target.value),
+                page: 1,
+              }))
+            }
+            className="px-4 py-2.5 text-sm font-medium border border-gray-200 rounded-lg bg-white hover:bg-gray-50 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-150 min-w-[130px]"
+          >
+            <option value="10">10 per page</option>
+            <option value="20">20 per page</option>
+            <option value="50">50 per page</option>
+          </select>
+
+          {/* Refresh Button */}
+          <button
+            onClick={() => fetchAllApplications()}
+            disabled={loading}
+            className="flex items-center justify-center space-x-2 px-4 py-2.5 text-sm font-medium border border-gray-200 rounded-lg bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-150 min-w-[110px]"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+            <span>Refresh</span>
+          </button>
         </div>
       </div>
 
@@ -2168,26 +2216,34 @@ const AdminDashboard = () => {
     ];
 
     return (
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 mb-6">
+      <div className="bg-white rounded-xl border border-gray-200 mb-6 overflow-hidden">
         <div className="flex overflow-x-auto">
           {tabs.map((tab) => {
             const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
             return (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center space-x-2 px-6 py-4 whitespace-nowrap border-b-2 font-medium text-sm transition-all relative ${
-                  activeTab === tab.id
-                    ? "border-blue-600 text-blue-600 bg-blue-50"
-                    : "border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50"
+                className={`group relative flex items-center space-x-2 px-6 py-4 whitespace-nowrap font-medium text-sm transition-all duration-300 ease-out focus:outline-none ${
+                  isActive
+                    ? "text-blue-700 bg-blue-50"
+                    : "text-gray-600 hover:text-gray-900 hover:bg-gray-50 hover:scale-[1.02]"
                 }`}
               >
-                <Icon className="w-5 h-5" />
+                <Icon
+                  className={`w-4 h-4 transition-transform duration-300 ${
+                    isActive ? "" : "group-hover:scale-110"
+                  }`}
+                />
                 <span>{tab.label}</span>
                 {tab.count !== null && tab.count > 0 && (
-                  <span className="ml-2 px-2 py-1 text-xs font-bold bg-red-500 text-white rounded-full">
+                  <span className="ml-2 px-2 py-0.5 text-xs font-semibold bg-red-50 text-red-700 border border-red-200 rounded-full transition-all duration-200 group-hover:scale-105">
                     {tab.count}
                   </span>
+                )}
+                {isActive && (
+                  <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600 rounded-full transition-all duration-300" />
                 )}
               </button>
             );
@@ -2278,7 +2334,7 @@ const AdminDashboard = () => {
 
       <TabNavigation />
 
-      <div className="min-h-96">
+      <div className="min-h-96 animate-fadeInUp" key={activeTab}>
         {activeTab === "overview" && <OverviewTab />}
         {activeTab === "pending" && <PendingVerificationsTab />}
         {activeTab === "stats" && <StatsTab />}
@@ -2289,8 +2345,14 @@ const AdminDashboard = () => {
       {/* Footer Info */}
       <div className="mt-8 text-center text-sm text-gray-500">
         <p>
-          Last updated: {new Date().toLocaleTimeString()} | Auto-refresh:{" "}
-          {autoRefresh ? "Enabled" : "Disabled"}
+          {isConnected ? (
+            <span className="text-green-600">🟢 Live Updates Active</span>
+          ) : (
+            <span className="text-yellow-600">🟡 Polling Mode</span>
+          )}
+          {" | "}
+          Last updated:{" "}
+          {lastFetch ? new Date(lastFetch).toLocaleTimeString() : "Loading..."}
         </p>
       </div>
     </div>

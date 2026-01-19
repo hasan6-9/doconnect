@@ -26,8 +26,10 @@ import {
   Award,
   Mail,
   Download,
+  CalendarPlus,
 } from "lucide-react";
 import toast from "react-hot-toast";
+import AppointmentScheduler from "../components/appointments/AppointmentScheduler";
 
 const ApplicationTracking = () => {
   const { user } = useAuth();
@@ -180,6 +182,48 @@ const ApplicationTracking = () => {
     }
   };
 
+  const handleAccept = async (applicationId) => {
+    try {
+      setActionLoading((prev) => ({ ...prev, [applicationId]: true }));
+      setError("");
+
+      await applicationAPI.accept(applicationId, {});
+      toast.success("Application accepted successfully!");
+      setSuccess("Application accepted successfully");
+      setTimeout(() => setSuccess(""), 3000);
+
+      // Reload applications
+      loadApplications();
+    } catch (err) {
+      const apiError = handleApiError(err);
+      toast.error(apiError.message || "Failed to accept application");
+      setError(apiError.message || "Failed to accept application");
+    } finally {
+      setActionLoading((prev) => ({ ...prev, [applicationId]: false }));
+    }
+  };
+
+  const handleReject = async (applicationId, reason = "") => {
+    try {
+      setActionLoading((prev) => ({ ...prev, [applicationId]: true }));
+      setError("");
+
+      await applicationAPI.reject(applicationId, reason);
+      toast.success("Application rejected");
+      setSuccess("Application rejected successfully");
+      setTimeout(() => setSuccess(""), 3000);
+
+      // Reload applications
+      loadApplications();
+    } catch (err) {
+      const apiError = handleApiError(err);
+      toast.error(apiError.message || "Failed to reject application");
+      setError(apiError.message || "Failed to reject application");
+    } finally {
+      setActionLoading((prev) => ({ ...prev, [applicationId]: false }));
+    }
+  };
+
   const handleWithdraw = async (applicationId) => {
     if (!window.confirm("Are you sure you want to withdraw this application?"))
       return;
@@ -207,10 +251,24 @@ const ApplicationTracking = () => {
       setError("");
 
       // Determine the other participant
-      const otherParticipantId =
-        user?.role === "senior"
-          ? application.applicant_id?._id
-          : application.job_id?.posted_by?._id;
+      // Handle both populated objects and raw ObjectId strings
+      let otherParticipantId;
+      if (user?.role === "senior") {
+        // For senior doctors, get the applicant's ID
+        otherParticipantId =
+          application.applicant_id?._id || application.applicant_id;
+      } else {
+        // For junior doctors, get the job poster's ID
+        const postedBy = application.job_id?.posted_by;
+        otherParticipantId = postedBy?._id || postedBy; // Handle both object and string
+      }
+
+      console.log("🔍 Send Message - Participant lookup:", {
+        role: user?.role,
+        applicant_id: application.applicant_id,
+        posted_by: application.job_id?.posted_by,
+        resolved_participant: otherParticipantId,
+      });
 
       if (!otherParticipantId) {
         setError("Cannot create conversation - participant not found");
@@ -374,6 +432,7 @@ const ApplicationTracking = () => {
                 "all",
                 "submitted",
                 "under_review",
+                "shortlisted",
                 "interview_scheduled",
                 "accepted",
                 "rejected",
@@ -446,6 +505,8 @@ const ApplicationTracking = () => {
                 userRole={user?.role}
                 onViewDetails={viewDetails}
                 onStatusUpdate={handleStatusUpdate}
+                onAccept={handleAccept}
+                onReject={handleReject}
                 onWithdraw={handleWithdraw}
                 onMessage={handleSendMessage}
                 actionLoading={actionLoading}
@@ -507,6 +568,8 @@ const ApplicationTracking = () => {
               setSelectedApplication(null);
             }}
             onStatusUpdate={handleStatusUpdate}
+            onAccept={handleAccept}
+            onReject={handleReject}
             onMessage={handleSendMessage}
           />
         )}
@@ -521,11 +584,14 @@ const ApplicationCard = ({
   userRole,
   onViewDetails,
   onStatusUpdate,
+  onAccept,
+  onReject,
   onWithdraw,
   onMessage,
   actionLoading,
 }) => {
   const [showMenu, setShowMenu] = useState(false);
+  const [showScheduler, setShowScheduler] = useState(false);
 
   const getStatusBadge = (status) => {
     const styles = {
@@ -551,7 +617,7 @@ const ApplicationCard = ({
             >
               {application.job_id?.title || "Job Title"}
             </Link>
-            {application.match_score && (
+            {application.match_score && application.match_score > 0 && (
               <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs font-medium rounded">
                 {application.match_score}% match
               </span>
@@ -617,16 +683,77 @@ const ApplicationCard = ({
                   Send Message
                 </button>
 
+                {/* Schedule Interview Button for Senior Doctors */}
                 {userRole === "senior" &&
-                  application.status === "submitted" && (
+                  application.status === "shortlisted" && (
                     <>
                       <div className="border-t border-gray-100" />
                       <button
                         onClick={() => {
-                          onStatusUpdate(
-                            application._id || application.id,
-                            "accepted"
-                          );
+                          setShowScheduler(true);
+                          setShowMenu(false);
+                        }}
+                        className="flex items-center w-full px-4 py-2 text-left text-blue-600 hover:bg-blue-50"
+                      >
+                        <CalendarPlus className="w-4 h-4 mr-3" />
+                        Schedule Interview
+                      </button>
+                    </>
+                  )}
+
+                {userRole === "senior" &&
+                  [
+                    "submitted",
+                    "under_review",
+                    "shortlisted",
+                    "interview_scheduled",
+                  ].includes(application.status) && (
+                    <>
+                      <div className="border-t border-gray-100" />
+                      <div className="px-4 py-2">
+                        <p className="text-xs font-medium text-gray-500 mb-2">
+                          Change Status
+                        </p>
+                      </div>
+                      {application.status === "submitted" && (
+                        <button
+                          onClick={() => {
+                            onStatusUpdate(
+                              application._id || application.id,
+                              "under_review"
+                            );
+                            setShowMenu(false);
+                          }}
+                          disabled={
+                            actionLoading[application._id || application.id]
+                          }
+                          className="flex items-center w-full px-4 py-2 text-left text-purple-600 hover:bg-purple-50"
+                        >
+                          <Eye className="w-4 h-4 mr-3" />
+                          Under Review
+                        </button>
+                      )}
+                      {application.status === "under_review" && (
+                        <button
+                          onClick={() => {
+                            onStatusUpdate(
+                              application._id || application.id,
+                              "shortlisted"
+                            );
+                            setShowMenu(false);
+                          }}
+                          disabled={
+                            actionLoading[application._id || application.id]
+                          }
+                          className="flex items-center w-full px-4 py-2 text-left text-indigo-600 hover:bg-indigo-50"
+                        >
+                          <TrendingUp className="w-4 h-4 mr-3" />
+                          Shortlist
+                        </button>
+                      )}
+                      <button
+                        onClick={() => {
+                          onAccept(application._id || application.id);
                           setShowMenu(false);
                         }}
                         disabled={
@@ -639,10 +766,7 @@ const ApplicationCard = ({
                       </button>
                       <button
                         onClick={() => {
-                          onStatusUpdate(
-                            application._id || application.id,
-                            "rejected"
-                          );
+                          onReject(application._id || application.id);
                           setShowMenu(false);
                         }}
                         disabled={
@@ -711,6 +835,24 @@ const ApplicationCard = ({
           View Details
         </button>
       </div>
+
+      {/* Appointment Scheduler Modal */}
+      {showScheduler && (
+        <AppointmentScheduler
+          doctor={application.applicant_id}
+          conversationId={null}
+          applicationId={application._id || application.id}
+          onClose={() => setShowScheduler(false)}
+          onSuccess={() => {
+            setShowScheduler(false);
+            toast.success("Interview scheduled! Application status updated.");
+            // Reload page to show updated status while maintaining auth
+            setTimeout(() => {
+              window.location.reload();
+            }, 500);
+          }}
+        />
+      )}
     </div>
   );
 };
@@ -721,6 +863,8 @@ const ApplicationDetailsModal = ({
   userRole,
   onClose,
   onStatusUpdate,
+  onAccept,
+  onReject,
   onMessage,
 }) => {
   return (
@@ -831,26 +975,58 @@ const ApplicationDetailsModal = ({
             Send Message
           </button>
 
-          {userRole === "senior" && application.status === "submitted" && (
-            <>
-              <button
-                onClick={() =>
-                  onStatusUpdate(application._id || application.id, "rejected")
-                }
-                className="flex items-center px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
-              >
-                Reject
-              </button>
-              <button
-                onClick={() =>
-                  onStatusUpdate(application._id || application.id, "accepted")
-                }
-                className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
-              >
-                Accept
-              </button>
-            </>
-          )}
+          {userRole === "senior" &&
+            [
+              "submitted",
+              "under_review",
+              "shortlisted",
+              "interview_scheduled",
+            ].includes(application.status) && (
+              <>
+                {application.status === "submitted" && (
+                  <button
+                    onClick={() =>
+                      onStatusUpdate(
+                        application._id || application.id,
+                        "under_review"
+                      )
+                    }
+                    className="flex items-center px-4 py-2 border border-purple-600 text-purple-600 rounded-lg hover:bg-purple-50"
+                  >
+                    <Eye className="w-4 h-4 mr-2" />
+                    Under Review
+                  </button>
+                )}
+                {application.status === "under_review" && (
+                  <button
+                    onClick={() =>
+                      onStatusUpdate(
+                        application._id || application.id,
+                        "shortlisted"
+                      )
+                    }
+                    className="flex items-center px-4 py-2 border border-indigo-600 text-indigo-600 rounded-lg hover:bg-indigo-50"
+                  >
+                    <TrendingUp className="w-4 h-4 mr-2" />
+                    Shortlist
+                  </button>
+                )}
+                <button
+                  onClick={() => onReject(application._id || application.id)}
+                  className="flex items-center px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
+                >
+                  <XCircle className="w-4 h-4 mr-2" />
+                  Reject
+                </button>
+                <button
+                  onClick={() => onAccept(application._id || application.id)}
+                  className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                >
+                  <CheckCircle className="w-4 h-4 mr-2" />
+                  Accept
+                </button>
+              </>
+            )}
 
           <button
             onClick={onClose}

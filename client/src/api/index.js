@@ -90,6 +90,8 @@ api.interceptors.response.use(
           message: error.response?.data?.message || "An error occurred",
           errors: error.response?.data?.errors || [],
           status: error.response?.status,
+          // Preserve all other fields from the original response
+          ...error.response?.data,
         },
       },
     };
@@ -106,6 +108,8 @@ export const adminAPI = {
   getDashboard: () => api.get("/admin/dashboard"),
   getVerificationStats: (timeframe = "30d") =>
     api.get(`/admin/verification/stats?timeframe=${timeframe}`),
+
+  getLiveMetrics: () => api.get("/admin/metrics/live"),
 
   getPendingVerifications: (params = {}) => {
     const queryParams = new URLSearchParams();
@@ -330,6 +334,10 @@ export const applicationAPI = {
   submit: (applicationData) =>
     api.post("/applications/submit", applicationData),
 
+  // Calculate match score for a job
+  calculateMatch: (jobId) =>
+    api.post(`/applications/matching/calculate/${jobId}`),
+
   getMyApplications: (params = {}) =>
     api.get("/applications/my-apps", { params }),
   getReceived: (params = {}) => api.get("/applications/received", { params }),
@@ -456,6 +464,10 @@ export const messageAPI = {
   deleteMessage: (messageId) => api.delete(`/messages/${messageId}`),
   markConversationAsRead: (conversationId) =>
     api.put(`/messages/conversations/${conversationId}/read`),
+  markMessagesAsDelivered: (messageIds, conversationId) =>
+    api.put("/messages/mark-delivered", { messageIds, conversationId }),
+  markMessagesAsRead: (messageIds, conversationId) =>
+    api.put("/messages/mark-read", { messageIds, conversationId }),
 
   // File upload
   uploadFile: (file, onProgress) => {
@@ -474,6 +486,29 @@ export const messageAPI = {
       },
     });
   },
+};
+
+// ============================================================================
+// APPOINTMENT API
+// ============================================================================
+export const appointmentAPI = {
+  // Create appointment
+  create: (appointmentData) => api.post("/appointments", appointmentData),
+
+  // Get appointments
+  getAll: (filters = {}) => api.get("/appointments", { params: filters }),
+  getById: (id) => api.get(`/appointments/${id}`),
+  getUpcoming: () => api.get("/appointments", { params: { upcoming: true } }),
+  getPending: () => api.get("/appointments", { params: { status: "pending" } }),
+
+  // Appointment actions
+  confirm: (id) => api.put(`/appointments/${id}/confirm`),
+  cancel: (id, reason) => api.put(`/appointments/${id}/cancel`, { reason }),
+  complete: (id) => api.put(`/appointments/${id}/complete`),
+
+  // Availability
+  checkAvailability: (doctorId, date) =>
+    api.get(`/appointments/availability/${doctorId}`, { params: { date } }),
 };
 
 // ============================================================================

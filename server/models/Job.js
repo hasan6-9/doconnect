@@ -102,7 +102,13 @@ const JobSchema = new mongoose.Schema(
       amount: {
         type: Number,
         required: function () {
-          return this.status !== "draft" && this.budget.type !== "negotiable";
+          // During updates, this.budget might not be fully populated
+          // Only require amount if status is not draft AND budget type is not negotiable
+          if (this.status === "draft") return false;
+          // Safely check budget.type - if it doesn't exist, don't require amount
+          return (
+            this.budget && this.budget.type && this.budget.type !== "negotiable"
+          );
         },
         min: [0, "Budget amount cannot be negative"],
       },

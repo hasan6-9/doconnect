@@ -314,7 +314,7 @@ const UserSchema = new mongoose.Schema(
       unique: true,
       lowercase: true,
       match: [
-        /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/,
+        /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,})+$/,
         "Please provide a valid email address",
       ],
     },
@@ -1197,19 +1197,40 @@ UserSchema.methods.getJobRecommendations = function (limit = 10) {
 UserSchema.methods.canApplyToJob = function (job) {
   const reasons = [];
 
+  console.log("🔍 Checking job application eligibility:");
+  console.log("  User ID:", this._id);
+  console.log("  User Role:", this.role);
+  console.log("  Account Status:", this.accountStatus);
+  console.log("  Years of Experience:", this.yearsOfExperience);
+  console.log("  Job Preferences:", this.job_preferences);
+  console.log(
+    "  Seeking Opportunities:",
+    this.job_preferences?.seeking_opportunities
+  );
+
   // Check role
   if (this.role !== "junior") {
+    console.log("  ❌ Role check failed: not junior");
     reasons.push("Only junior doctors can apply to jobs");
+  } else {
+    console.log("  ✅ Role check passed");
   }
 
   // Check account status
   if (this.accountStatus !== "active") {
+    console.log("  ❌ Account status check failed:", this.accountStatus);
     reasons.push("Account must be active to apply to jobs");
+  } else {
+    console.log("  ✅ Account status check passed");
   }
 
-  // ✅ FIX: Safe check for job_preferences
-  if (this.job_preferences && !this.job_preferences.seeking_opportunities) {
+  // ✅ FIX: Only block if explicitly set to false (not seeking)
+  // If undefined or true, allow application
+  if (this.job_preferences?.seeking_opportunities === false) {
+    console.log("  ❌ Seeking opportunities check failed: explicitly false");
     reasons.push("User is not currently seeking opportunities");
+  } else {
+    console.log("  ✅ Seeking opportunities check passed (undefined or true)");
   }
 
   // Check experience requirements
@@ -1217,9 +1238,14 @@ UserSchema.methods.canApplyToJob = function (job) {
     job.experience_required &&
     job.experience_required.minimum_years > this.yearsOfExperience
   ) {
+    console.log("  ❌ Experience check failed:");
+    console.log("    Required:", job.experience_required.minimum_years);
+    console.log("    User has:", this.yearsOfExperience);
     reasons.push(
       `Minimum ${job.experience_required.minimum_years} years of experience required`
     );
+  } else {
+    console.log("  ✅ Experience check passed");
   }
 
   // ✅ ADD: Check specialty match (optional but recommended)
@@ -1232,10 +1258,17 @@ UserSchema.methods.canApplyToJob = function (job) {
         ));
 
     if (!specialtyMatch) {
+      console.log("  ⚠️  Specialty mismatch (soft warning, not blocking)");
       // This is a soft warning, not a hard requirement
       // reasons.push(`Specialty mismatch: ${job.specialty} required`);
+    } else {
+      console.log("  ✅ Specialty match found");
     }
   }
+
+  console.log("  📊 Final eligibility result:");
+  console.log("    Can Apply:", reasons.length === 0);
+  console.log("    Reasons:", reasons);
 
   return {
     canApply: reasons.length === 0,

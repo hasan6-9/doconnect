@@ -333,6 +333,33 @@ module.exports = {
         ".pattern-trust": {
           backgroundImage: theme("backgroundImage.trust-pattern"),
         },
+        // Custom scrollbar utilities for news cards
+        ".scrollbar-thin": {
+          scrollbarWidth: "thin",
+          scrollbarColor: "rgb(203 213 225) transparent",
+        },
+        ".scrollbar-thin::-webkit-scrollbar": {
+          width: "6px",
+        },
+        ".scrollbar-thin::-webkit-scrollbar-track": {
+          background: "transparent",
+        },
+        ".scrollbar-thin::-webkit-scrollbar-thumb": {
+          background: "rgb(203 213 225)",
+          borderRadius: "3px",
+        },
+        ".scrollbar-thin::-webkit-scrollbar-thumb:hover": {
+          background: "rgb(148 163 184)",
+        },
+        ".scrollbar-thumb-slate-300::-webkit-scrollbar-thumb": {
+          background: "rgb(203 213 225)",
+        },
+        ".scrollbar-thumb-slate-400:hover::-webkit-scrollbar-thumb:hover": {
+          background: "rgb(148 163 184)",
+        },
+        ".scrollbar-track-transparent::-webkit-scrollbar-track": {
+          background: "transparent",
+        },
       };
 
       const newComponents = {

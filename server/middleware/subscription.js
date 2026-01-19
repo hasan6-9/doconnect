@@ -109,12 +109,26 @@ exports.checkUsageLimit = (usageType) => {
         });
       }
 
-      if (!subscription.hasUsageAvailable(usageType)) {
+      // Check usage limits - direct property access
+      const usageData = subscription.usage?.[usageType];
+
+      if (!usageData) {
+        // If no usage tracking exists for this type, allow the operation
+        req.subscription = subscription;
+        return next();
+      }
+
+      const limit = usageData.limit || 0;
+      const used = usageData.used || 0;
+      const remaining = limit - used;
+
+      if (remaining <= 0 && limit !== -1) {
+        // -1 means unlimited
         return res.status(429).json({
           success: false,
           message: `${usageType} limit reached`,
-          limit: subscription.usage[usageType]?.limit,
-          used: subscription.usage[usageType]?.used,
+          limit: limit,
+          used: used,
           remaining: 0,
           upgrade: `Upgrade to ${getNextPlan(
             subscription.planId

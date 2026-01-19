@@ -86,11 +86,17 @@ const Dashboard = () => {
     enabled: isSenior(),
   });
 
-  const { data: adminDashboardData } = useQuery({
-    queryKey: ["admin-dashboard"],
-    queryFn: () => adminAPI.getDashboard(),
-    enabled: isAdmin(),
-  });
+  // Real-time admin metrics (same as AdminDashboard.js)
+  const { socket: adminSocket, isConnected: adminSocketConnected } = isAdmin()
+    ? require("../hooks/useAdminSocket").useAdminSocket()
+    : { socket: null, isConnected: false };
+
+  const { metrics: adminDashboardData } = isAdmin()
+    ? require("../hooks/useRealtimeMetrics").useRealtimeMetrics(
+        adminSocket,
+        adminSocketConnected
+      )
+    : { metrics: null };
 
   const { data: pendingVerificationsData } = useQuery({
     queryKey: ["pending-verifications", "dashboard"],
@@ -150,63 +156,67 @@ const Dashboard = () => {
           )}
         </div>
 
-        {/* SUBSCRIPTION STATUS WIDGET */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <CreditCard className="w-6 h-6 text-blue-600" />
-              <h3 className="text-lg font-semibold text-gray-900">
-                Subscription Status
-              </h3>
+        {/* SUBSCRIPTION STATUS WIDGET - Hidden for Admin */}
+        {!isAdmin() && (
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <CreditCard className="w-6 h-6 text-blue-600" />
+                <h3 className="text-lg font-semibold text-gray-900">
+                  Subscription Status
+                </h3>
+              </div>
             </div>
-          </div>
 
-          {subscriptionLoading ? (
-            <div className="mt-4 flex items-center justify-center py-6">
-              <Loader className="w-6 h-6 animate-spin text-blue-600" />
-            </div>
-          ) : subscription ? (
-            <div className="mt-4 flex items-center justify-between">
-              <div>
-                <p className="text-gray-600 text-sm mb-1">Current Plan</p>
-                <p className="text-2xl font-bold text-blue-600 mb-2">
-                  {subscription.planName}
-                </p>
-                <p className="text-sm text-gray-500">
-                  Renews:{" "}
-                  {new Date(subscription.currentPeriodEnd).toLocaleDateString()}
-                </p>
+            {subscriptionLoading ? (
+              <div className="mt-4 flex items-center justify-center py-6">
+                <Loader className="w-6 h-6 animate-spin text-blue-600" />
               </div>
-              <div className="flex flex-col gap-2">
+            ) : subscription ? (
+              <div className="mt-4 flex items-center justify-between">
+                <div>
+                  <p className="text-gray-600 text-sm mb-1">Current Plan</p>
+                  <p className="text-2xl font-bold text-blue-600 mb-2">
+                    {subscription.planName}
+                  </p>
+                  <p className="text-sm text-gray-500">
+                    Renews:{" "}
+                    {new Date(
+                      subscription.currentPeriodEnd
+                    ).toLocaleDateString()}
+                  </p>
+                </div>
+                <div className="flex flex-col gap-2">
+                  <Link
+                    to="/subscription/status"
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium transition-colors text-center"
+                  >
+                    View Details
+                  </Link>
+                  <Link
+                    to="/subscription/manage"
+                    className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 text-sm font-medium transition-colors text-center"
+                  >
+                    Manage
+                  </Link>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-4">
+                <p className="text-gray-600 mb-4">
+                  You're currently on the free plan. Upgrade to unlock premium
+                  features.
+                </p>
                 <Link
-                  to="/subscription/status"
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium transition-colors text-center"
+                  to="/subscription/plans"
+                  className="inline-block px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium transition-colors"
                 >
-                  View Details
-                </Link>
-                <Link
-                  to="/subscription/manage"
-                  className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 text-sm font-medium transition-colors text-center"
-                >
-                  Manage
+                  View Plans
                 </Link>
               </div>
-            </div>
-          ) : (
-            <div className="mt-4">
-              <p className="text-gray-600 mb-4">
-                You're currently on the free plan. Upgrade to unlock premium
-                features.
-              </p>
-              <Link
-                to="/subscription/plans"
-                className="inline-block px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium transition-colors"
-              >
-                View Plans
-              </Link>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )}
 
         {/* Role-Based Dashboard */}
         {isJunior() && (
@@ -308,19 +318,19 @@ const JuniorDashboard = ({
           return (
             <div
               key={idx}
-              className="bg-white rounded-xl shadow-sm border border-gray-200 p-6"
+              className="bg-white rounded-xl border border-gray-200 p-6 hover:border-gray-300 hover:shadow-sm transition-all duration-200"
             >
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-600 mb-1">{stat.label}</p>
-                  <p className="text-3xl font-bold text-gray-900">
+              <div className="flex items-start justify-between">
+                <div className="flex-1">
+                  <p className="text-xs font-medium uppercase tracking-wide text-gray-500 mb-2">
+                    {stat.label}
+                  </p>
+                  <p className="text-3xl font-semibold text-gray-900">
                     {stat.value}
                   </p>
                 </div>
-                <div
-                  className={`w-12 h-12 ${stat.color} rounded-xl flex items-center justify-center`}
-                >
-                  <Icon className="w-6 h-6" />
+                <div className="p-3 rounded-lg bg-gray-50">
+                  <Icon className="w-5 h-5 text-gray-600" />
                 </div>
               </div>
             </div>
@@ -689,7 +699,7 @@ const SeniorDashboard = ({
 // ADMIN DASHBOARD
 // ============================================================================
 const AdminDashboard = ({ adminDashboardData, pendingVerificationsData }) => {
-  const dashData = adminDashboardData?.data || {};
+  const dashData = adminDashboardData || {};
   const pending = pendingVerificationsData?.data?.data || [];
   const pendingCount = pendingVerificationsData?.data?.pagination?.total || 0;
 
@@ -702,23 +712,24 @@ const AdminDashboard = ({ adminDashboardData, pendingVerificationsData }) => {
       subtitle: `${dashData.metrics?.users?.active || 0} active`,
     },
     {
-      label: "Pending Verifications",
+      label: "Verified Users",
+      value: dashData.metrics?.verification?.verified || 0,
+      icon: CheckCircle,
+      color: "bg-green-100 text-green-600",
+    },
+    {
+      label: "Pending Verification",
       value: pendingCount,
       icon: Clock,
       color: "bg-yellow-100 text-yellow-600",
       urgent: pendingCount > 0,
     },
     {
-      label: "Active Jobs",
-      value: dashData.metrics?.jobs?.active || 0,
-      icon: Briefcase,
-      color: "bg-green-100 text-green-600",
-    },
-    {
-      label: "Platform Health",
-      value: "98.9%",
-      icon: TrendingUp,
+      label: "Verification Rate",
+      value: `${dashData.metrics?.verification?.rate || 0}%`,
+      icon: Shield,
       color: "bg-purple-100 text-purple-600",
+      subtitle: `${dashData.metrics?.verification?.verified || 0} verified`,
     },
   ];
 
@@ -825,25 +836,45 @@ const AdminDashboard = ({ adminDashboardData, pendingVerificationsData }) => {
 // ============================================================================
 const StatusBadge = ({ status }) => {
   const config = {
-    submitted: { color: "bg-blue-100 text-blue-800", label: "Submitted" },
+    submitted: {
+      color: "bg-blue-50 text-blue-600 border-blue-200",
+      label: "Submitted",
+    },
     under_review: {
-      color: "bg-purple-100 text-purple-800",
+      color: "bg-purple-50 text-purple-700 border-purple-200",
       label: "Under Review",
     },
-    accepted: { color: "bg-green-100 text-green-800", label: "Accepted" },
-    rejected: { color: "bg-red-100 text-red-800", label: "Rejected" },
-    active: { color: "bg-green-100 text-green-800", label: "Active" },
-    closed: { color: "bg-gray-100 text-gray-800", label: "Closed" },
-    completed: { color: "bg-blue-100 text-blue-800", label: "Completed" },
+    accepted: {
+      color: "bg-green-50 text-green-700 border-green-200",
+      label: "Accepted",
+    },
+    rejected: {
+      color: "bg-red-50 text-red-700 border-red-200",
+      label: "Rejected",
+    },
+    active: {
+      color: "bg-blue-50 text-blue-700 border-blue-200",
+      label: "Active",
+    },
+    closed: {
+      color: "bg-gray-50 text-gray-600 border-gray-200",
+      label: "Closed",
+    },
+    completed: {
+      color: "bg-blue-50 text-blue-700 border-blue-200",
+      label: "Completed",
+    },
   };
 
   const { color, label } = config[status] || {
-    color: "bg-gray-100 text-gray-800",
+    color: "bg-gray-50 text-gray-600 border-gray-200",
     label: status,
   };
 
   return (
-    <span className={`text-xs font-semibold px-2 py-1 rounded-full ${color}`}>
+    <span
+      className={`inline-flex items-center text-xs font-medium px-2.5 py-0.5 rounded-md border ${color}`}
+    >
       {label}
     </span>
   );

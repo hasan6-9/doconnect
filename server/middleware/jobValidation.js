@@ -254,15 +254,7 @@ exports.validateJobUpdate = [
   body("timeline.deadline")
     .optional()
     .isISO8601()
-    .withMessage("Deadline must be a valid date")
-    .custom((value) => {
-      const deadline = new Date(value);
-      const now = new Date();
-      if (deadline <= now) {
-        throw new Error("Deadline must be in the future");
-      }
-      return true;
-    }),
+    .withMessage("Deadline must be a valid date"),
 
   body("status")
     .optional()

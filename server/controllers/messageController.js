@@ -328,6 +328,113 @@ exports.sendMessage = async (req, res) => {
 };
 
 /**
+ * Mark messages as delivered
+ * @route PUT /api/messages/mark-delivered
+ * @access Private
+ */
+exports.markMessagesAsDelivered = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { messageIds } = req.body;
+
+    if (!messageIds || !Array.isArray(messageIds)) {
+      return res.status(400).json({
+        success: false,
+        message: "Message IDs array is required",
+      });
+    }
+
+    // Update messages where user is recipient and status is 'sent'
+    const result = await Message.updateMany(
+      {
+        _id: { $in: messageIds },
+        recipient: userId,
+        status: "sent",
+      },
+      {
+        $set: {
+          status: "delivered",
+          deliveredAt: new Date(),
+        },
+      }
+    );
+
+    res.status(200).json({
+      success: true,
+      data: {
+        modifiedCount: result.modifiedCount,
+      },
+      message: "Messages marked as delivered",
+    });
+  } catch (error) {
+    console.error("Error marking messages as delivered:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to mark messages as delivered",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Mark messages as read
+ * @route PUT /api/messages/mark-read
+ * @access Private
+ */
+exports.markMessagesAsRead = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { messageIds, conversationId } = req.body;
+
+    if (!messageIds || !Array.isArray(messageIds)) {
+      return res.status(400).json({
+        success: false,
+        message: "Message IDs array is required",
+      });
+    }
+
+    // Update messages where user is recipient
+    const result = await Message.updateMany(
+      {
+        _id: { $in: messageIds },
+        recipient: userId,
+        status: { $in: ["sent", "delivered"] },
+      },
+      {
+        $set: {
+          status: "read",
+          readAt: new Date(),
+        },
+      }
+    );
+
+    // If conversationId provided, reset unread count
+    if (conversationId) {
+      const conversation = await Conversation.findById(conversationId);
+      if (conversation && conversation.isParticipant(userId)) {
+        conversation.resetUnreadCount(userId);
+        await conversation.save();
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        modifiedCount: result.modifiedCount,
+      },
+      message: "Messages marked as read",
+    });
+  } catch (error) {
+    console.error("Error marking messages as read:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to mark messages as read",
+      error: error.message,
+    });
+  }
+};
+
+/**
  * Edit a message
  * @route PUT /api/messages/:messageId
  * @access Private
@@ -555,6 +662,21 @@ exports.markConversationAsRead = async (req, res) => {
       });
     }
 
+    // Mark all unread messages as read
+    await Message.updateMany(
+      {
+        conversationId,
+        recipient: userId,
+        status: { $in: ["sent", "delivered"] },
+      },
+      {
+        $set: {
+          status: "read",
+          readAt: new Date(),
+        },
+      }
+    );
+
     // Reset unread count for this user
     conversation.resetUnreadCount(userId);
     await conversation.save();
@@ -613,3 +735,5 @@ exports.uploadMessageFile = async (req, res) => {
     });
   }
 };
+
+module.exports = exports;

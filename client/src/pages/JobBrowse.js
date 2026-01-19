@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { useAuth } from "../context/AuthContext";
-import { jobAPI, handleApiError } from "../api";
+import { jobAPI, applicationAPI, handleApiError } from "../api";
 import {
   Search,
   Filter,
@@ -117,6 +117,35 @@ const JobBrowse = () => {
 
   const jobs = jobsData?.data?.data || [];
   const pagination = jobsData?.data?.pagination || { total: 0, pages: 0 };
+
+  // Fetch user's applications to show "Already Applied" badges
+  const { data: userApplicationsData } = useQuery({
+    queryKey: ["user-applications-list", user?.id],
+    queryFn: async () => {
+      try {
+        const response = await applicationAPI.getMyApplications({});
+        const applications = response?.data?.data || [];
+        // Filter out withdrawn applications so they don't show as "Applied"
+        const activeApplications = applications.filter(
+          (app) => app.status !== "withdrawn"
+        );
+        return activeApplications;
+      } catch (error) {
+        console.log("Failed to fetch user applications:", error);
+        return [];
+      }
+    },
+    enabled: isAuthenticated && isJunior() && !!user?.id,
+    retry: 1,
+    staleTime: 0,
+    cacheTime: 0,
+    refetchOnMount: "always",
+  });
+
+  const userApplications = userApplicationsData || [];
+  const appliedJobIds = new Set(
+    userApplications.map((app) => app.job_id?._id || app.job_id)
+  );
 
   // Saved search functions
   const saveCurrentSearch = () => {
@@ -467,13 +496,21 @@ const JobBrowse = () => {
                           {job.category} • {job.specialty}
                         </p>
                       </div>
-                      <span
-                        className={`px-2 py-1 rounded text-xs font-medium ${getStatusColor(
-                          job.status
-                        )}`}
-                      >
-                        {job.status}
-                      </span>
+                      <div className="flex flex-col items-end gap-2">
+                        <span
+                          className={`px-2 py-1 rounded text-xs font-medium ${getStatusColor(
+                            job.status
+                          )}`}
+                        >
+                          {job.status}
+                        </span>
+                        {appliedJobIds.has(job._id) && (
+                          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                            <CheckCircle className="w-3 h-3 mr-1" />
+                            Applied
+                          </span>
+                        )}
+                      </div>
                     </div>
 
                     {/* Description */}

@@ -6,10 +6,19 @@ import { Check, CheckCheck, Paperclip } from "lucide-react";
 
 const MessageBubble = ({ message }) => {
   const { user } = useAuth();
-  // Handle both populated sender object and string ID
-  const senderId =
-    typeof message.sender === "object" ? message.sender._id : message.sender;
-  const isOwnMessage = senderId === user._id;
+
+  // Robust sender detection - handle both populated object and string ID
+  const getSenderId = () => {
+    if (!message.sender) return null;
+    if (typeof message.sender === "object" && message.sender._id) {
+      return message.sender._id.toString();
+    }
+    return message.sender.toString();
+  };
+
+  const senderId = getSenderId();
+  const currentUserId = user?._id?.toString();
+  const isOwnMessage = senderId === currentUserId;
 
   const renderFileAttachment = () => {
     if (message.messageType !== "file") return null;
@@ -19,7 +28,7 @@ const MessageBubble = ({ message }) => {
         href={message.fileUrl}
         target="_blank"
         rel="noopener noreferrer"
-        className="flex items-center gap-2 p-3 bg-white/20 rounded-lg hover:bg-white/30 transition-colors"
+        className="flex items-center gap-2 p-3 bg-white/10 rounded-lg hover:bg-white/20 transition-colors"
       >
         <Paperclip className="w-4 h-4" />
         <div className="flex-1 min-w-0">
@@ -32,15 +41,39 @@ const MessageBubble = ({ message }) => {
     );
   };
 
+  const renderStatusIndicator = () => {
+    if (!isOwnMessage) return null;
+
+    return (
+      <span className="flex items-center ml-1">
+        {message.status === "sent" && (
+          <Check className="w-3.5 h-3.5 text-gray-400" />
+        )}
+        {message.status === "delivered" && (
+          <CheckCheck className="w-3.5 h-3.5 text-gray-400" />
+        )}
+        {message.status === "read" && (
+          <CheckCheck className="w-3.5 h-3.5 text-blue-500" />
+        )}
+      </span>
+    );
+  };
+
   return (
-    <div className={`flex ${isOwnMessage ? "justify-end" : "justify-start"}`}>
-      <div className={`max-w-[70%] ${isOwnMessage ? "order-2" : "order-1"}`}>
+    <div
+      className={`flex mb-4 ${isOwnMessage ? "justify-end" : "justify-start"}`}
+    >
+      <div
+        className={`flex flex-col max-w-[70%] ${
+          isOwnMessage ? "items-end" : "items-start"
+        }`}
+      >
         {/* Message Bubble */}
         <div
-          className={`rounded-lg px-4 py-2 ${
+          className={`rounded-2xl px-4 py-2.5 shadow-sm ${
             isOwnMessage
-              ? "bg-blue-600 text-white"
-              : "bg-white text-gray-900 border border-gray-200"
+              ? "bg-blue-600 text-white rounded-br-sm"
+              : "bg-white text-gray-900 border border-gray-200 rounded-bl-sm"
           }`}
         >
           {/* File Attachment */}
@@ -48,7 +81,7 @@ const MessageBubble = ({ message }) => {
 
           {/* Message Content */}
           {message.content && (
-            <p className="text-sm whitespace-pre-wrap break-words">
+            <p className="text-[15px] leading-relaxed whitespace-pre-wrap break-words">
               {message.content}
             </p>
           )}
@@ -56,7 +89,7 @@ const MessageBubble = ({ message }) => {
           {/* Edited Indicator */}
           {message.editedAt && (
             <p
-              className={`text-xs mt-1 ${
+              className={`text-xs mt-1 italic ${
                 isOwnMessage ? "text-blue-100" : "text-gray-500"
               }`}
             >
@@ -66,27 +99,13 @@ const MessageBubble = ({ message }) => {
         </div>
 
         {/* Message Info */}
-        <div
-          className={`flex items-center gap-1 mt-1 px-1 ${
-            isOwnMessage ? "justify-end" : "justify-start"
-          }`}
-        >
+        <div className="flex items-center gap-1 mt-1 px-1">
           <span className="text-xs text-gray-500">
             {formatDistanceToNow(new Date(message.createdAt), {
               addSuffix: true,
             })}
           </span>
-
-          {/* Read Receipt (only for own messages) */}
-          {isOwnMessage && (
-            <span className="text-gray-500">
-              {message.readAt ? (
-                <CheckCheck className="w-4 h-4 text-blue-600" />
-              ) : (
-                <Check className="w-4 h-4" />
-              )}
-            </span>
-          )}
+          {renderStatusIndicator()}
         </div>
       </div>
     </div>

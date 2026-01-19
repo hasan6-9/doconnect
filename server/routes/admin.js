@@ -10,6 +10,7 @@ const {
   verifyBackgroundCheck,
   bulkVerification,
   getVerificationStats,
+  getLiveMetrics,
   getAdminDashboard,
 } = require("../controllers/adminController");
 
@@ -81,6 +82,7 @@ const validateGetStats = [
 
 // Dashboard and overview routes
 router.get("/dashboard", getAdminDashboard);
+router.get("/metrics/live", getLiveMetrics);
 router.get("/verification/stats", validateGetStats, getVerificationStats);
 
 // Verification management routes

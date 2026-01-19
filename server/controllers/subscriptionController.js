@@ -184,7 +184,14 @@ exports.createCheckoutSession = async (req, res) => {
     // Get or create Stripe customer
     let stripeCustomerId = subscription?.stripeCustomerId;
 
-    if (!stripeCustomerId) {
+    // Check if we need to create a new Stripe customer
+    // (no ID, or has a temporary/seed ID)
+    const needsNewCustomer =
+      !stripeCustomerId ||
+      stripeCustomerId.startsWith("temp_") ||
+      stripeCustomerId.startsWith("seed_");
+
+    if (needsNewCustomer) {
       console.log("Creating new Stripe customer...");
       const customer = await stripe.customers.create({
         email: user.email,

@@ -231,10 +231,11 @@ exports.canApplyToSpecificJob = async (req, res, next) => {
       });
     }
 
-    // Check if user already applied
+    // Check if user already applied (exclude withdrawn applications - they can reapply)
     const existingApplication = await Application.findOne({
       job_id: jobId,
       applicant_id: req.user.id,
+      status: { $ne: "withdrawn" }, // Allow reapplication after withdrawal
     });
 
     if (existingApplication) {
@@ -300,7 +301,9 @@ exports.canPerformBulkOperations = (req, res, next) => {
 // Rate limiting for job posting (prevent spam)
 exports.checkJobPostingLimit = async (req, res, next) => {
   try {
-    const subscription = req.user.subscription;
+    // Fetch fresh subscription data from database to ensure we have latest usage
+    const Subscription = require("../models/Subscription");
+    const subscription = await Subscription.findOne({ userId: req.user.id });
 
     if (!subscription) {
       return res.status(403).json({
@@ -309,18 +312,32 @@ exports.checkJobPostingLimit = async (req, res, next) => {
       });
     }
 
-    // Check usage limits from subscription
-    const hasUsageAvailable = subscription.hasUsageAvailable("jobPostings");
+    // Check usage limits from subscription - direct property access
+    const jobPostingsUsage = subscription.usage?.jobPostings;
 
-    if (!hasUsageAvailable) {
-      const remaining = subscription.getRemainingUsage("jobPostings");
-      const limit = subscription.usage.jobPostings?.limit;
+    if (!jobPostingsUsage) {
+      // If no usage tracking exists, allow the operation (free tier default)
+      return next();
+    }
 
+    const limit = jobPostingsUsage.limit || 0;
+    const used = jobPostingsUsage.used || 0;
+    const remaining = limit - used;
+
+    console.log("🔒 Job Posting Limit Check:");
+    console.log("  Limit:", limit);
+    console.log("  Used:", used);
+    console.log("  Remaining:", remaining);
+
+    // Check if user has reached their limit
+    if (remaining <= 0 && limit !== -1) {
+      // -1 means unlimited
+      console.log("❌ Job posting limit reached!");
       return res.status(429).json({
         success: false,
         message: "Job posting limit reached for your plan",
         limit: limit,
-        used: subscription.usage.jobPostings?.used || 0,
+        used: used,
         remaining: 0,
         currentPlan: subscription.planId,
         upgradeInfo:
@@ -338,6 +355,7 @@ exports.checkJobPostingLimit = async (req, res, next) => {
       });
     }
 
+    console.log("✅ Job posting allowed");
     next();
   } catch (error) {
     console.error("Error in checkJobPostingLimit middleware:", error);
@@ -360,18 +378,26 @@ exports.checkApplicationLimit = async (req, res, next) => {
       });
     }
 
-    // Check usage limits from subscription
-    const hasUsageAvailable = subscription.hasUsageAvailable("jobApplications");
+    // Check usage limits from subscription - direct property access
+    const jobApplicationsUsage = subscription.usage?.jobApplications;
 
-    if (!hasUsageAvailable) {
-      const remaining = subscription.getRemainingUsage("jobApplications");
-      const limit = subscription.usage.jobApplications?.limit;
+    if (!jobApplicationsUsage) {
+      // If no usage tracking exists, allow the operation (free tier default)
+      return next();
+    }
 
+    const limit = jobApplicationsUsage.limit || 0;
+    const used = jobApplicationsUsage.used || 0;
+    const remaining = limit - used;
+
+    // Check if user has reached their limit
+    if (remaining <= 0 && limit !== -1) {
+      // -1 means unlimited
       return res.status(429).json({
         success: false,
         message: "Job application limit reached for your plan",
         limit: limit,
-        used: subscription.usage.jobApplications?.used || 0,
+        used: used,
         remaining: 0,
         currentPlan: subscription.planId,
         upgradeInfo:

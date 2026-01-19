@@ -38,6 +38,48 @@ exports.createJob = async (req, res) => {
     // Update user job statistics
     await req.user.updateJobStatistics();
 
+    // Update subscription usage tracking
+    console.log("🔍 Attempting to track subscription usage...");
+    console.log("User ID:", req.user.id);
+    console.log("User has subscription?", !!req.user.subscription);
+
+    if (req.user.subscription) {
+      const Subscription = require("../models/Subscription");
+      try {
+        const subscription = await Subscription.findOne({
+          userId: req.user.id,
+        });
+        console.log("Found subscription in DB:", !!subscription);
+
+        if (subscription) {
+          console.log(
+            "Usage before:",
+            JSON.stringify(subscription.usage?.jobPostings)
+          );
+          await subscription.trackUsage("jobPostings", 1);
+          console.log(
+            "Usage after:",
+            JSON.stringify(subscription.usage?.jobPostings)
+          );
+          console.log("✅ Subscription usage tracked for job posting");
+        } else {
+          console.log(
+            "⚠️ No subscription document found for userId:",
+            req.user.id
+          );
+        }
+      } catch (subError) {
+        console.error(
+          "❌ Error tracking subscription usage:",
+          subError.message
+        );
+        console.error("Stack:", subError.stack);
+        // Don't fail the job creation if subscription tracking fails
+      }
+    } else {
+      console.log("⚠️ req.user.subscription is null/undefined");
+    }
+
     // Populate the posted_by field for response
     await job.populate("posted_by", "firstName lastName profilePhoto");
 
@@ -88,8 +130,8 @@ exports.getJob = async (req, res) => {
       });
     }
 
-    // Track job view (increment view count) - don't await to avoid slowing response
-    Job.findByIdAndUpdate(req.params.id, { $inc: { views_count: 1 } }).exec();
+    // Note: View tracking is handled by the dedicated POST /api/jobs/:id/view endpoint
+    // This prevents duplicate counting from React Query refetches and page refreshes
 
     // Filter sensitive information based on user role
     let jobData = { ...job };

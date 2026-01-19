@@ -268,6 +268,62 @@ const notifyVerificationStatus = async (userId, verificationType, status) => {
   });
 };
 
+/**
+ * Create application status notification (for status changes)
+ * @param {String} applicantId - Applicant user ID
+ * @param {String} jobId - Job ID
+ * @param {String} applicationId - Application ID
+ * @param {String} status - New status
+ */
+const createApplicationStatusNotification = async (
+  applicantId,
+  jobId,
+  applicationId,
+  status
+) => {
+  const Job = require("../models/Job");
+
+  try {
+    // Get job details for the notification message
+    const job = await Job.findById(jobId).select("title");
+    const jobTitle = job?.title || "a job";
+
+    const statusMessages = {
+      under_review: `Your application for "${jobTitle}" is now under review`,
+      shortlisted: `Great news! You've been shortlisted for "${jobTitle}"`,
+      interview_scheduled: `Interview scheduled for "${jobTitle}"! Check your appointments`,
+      accepted: `Congratulations! Your application for "${jobTitle}" has been accepted!`,
+      rejected: `Your application for "${jobTitle}" was not selected`,
+      completed: `Your work on "${jobTitle}" has been marked as completed`,
+    };
+
+    const message =
+      statusMessages[status] || `Application status updated to ${status}`;
+    const priority = [
+      "accepted",
+      "interview_scheduled",
+      "shortlisted",
+    ].includes(status)
+      ? "high"
+      : "medium";
+
+    return sendNotification(applicantId, "application_status", {
+      title: "Application Status Update",
+      message,
+      data: {
+        applicationId,
+        jobId,
+        status,
+      },
+      actionUrl: `/applications/tracking`,
+      priority,
+    });
+  } catch (error) {
+    console.error("Error creating application status notification:", error);
+    throw error;
+  }
+};
+
 module.exports = {
   setSocketIO,
   createNotification,
@@ -282,4 +338,6 @@ module.exports = {
   notifyNewMessage,
   notifySubscriptionUpdate,
   notifyVerificationStatus,
+  createJobApplicationNotification: notifyJobApplication, // Alias for compatibility
+  createApplicationStatusNotification, // NEW: For status change notifications
 };

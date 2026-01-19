@@ -25,11 +25,11 @@ import {
   FileText,
   CreditCard,
   Settings,
-  Users,
-  BarChart3,
   ChevronLeft,
   ChevronRight,
   ClipboardList,
+  Newspaper,
+  Calendar,
 } from "lucide-react";
 
 // Import existing pages
@@ -49,6 +49,7 @@ import ApplicationTracking from "./pages/ApplicationTracking";
 
 // Import messaging and notification pages
 import MessagesPage from "./pages/MessagesPage";
+import AppointmentsList from "./pages/AppointmentsList";
 import NotificationsPage from "./pages/NotificationsPage";
 import NotificationPreferences from "./pages/NotificationPreferences";
 import PublicProfile from "./pages/PublicProfile";
@@ -59,6 +60,7 @@ import SubscriptionStatus from "./pages/SubscriptionStatus";
 import ManageSubscription from "./pages/ManageSubscription";
 import CheckoutSuccess from "./pages/CheckoutSuccess";
 import CheckoutCancel from "./pages/CheckoutCancel";
+import MedicalNews from "./pages/MedicalNews";
 
 // ErrorBoundary component
 class ErrorBoundary extends React.Component {
@@ -124,6 +126,12 @@ const DesktopSidebar = ({ sidebarOpen, setSidebarOpen }) => {
         icon: Search,
         show: !isAdmin(),
       },
+      {
+        label: "Medical News",
+        path: "/news",
+        icon: Newspaper,
+        show: !isAdmin(),
+      },
     ];
 
     if (isJunior()) {
@@ -134,6 +142,12 @@ const DesktopSidebar = ({ sidebarOpen, setSidebarOpen }) => {
           label: "My Applications",
           path: "/applications",
           icon: FileText,
+          show: true,
+        },
+        {
+          label: "Appointments",
+          path: "/appointments",
+          icon: Calendar,
           show: true,
         },
         {
@@ -168,6 +182,12 @@ const DesktopSidebar = ({ sidebarOpen, setSidebarOpen }) => {
           show: true,
         },
         {
+          label: "Appointments",
+          path: "/appointments",
+          icon: Calendar,
+          show: true,
+        },
+        {
           label: "Messages",
           path: "/messages",
           icon: MessageSquare,
@@ -191,19 +211,6 @@ const DesktopSidebar = ({ sidebarOpen, setSidebarOpen }) => {
           show: true,
         },
         { label: "Admin Panel", path: "/admin", icon: Settings, show: true },
-        {
-          label: "Verifications",
-          path: "/admin/verifications",
-          icon: FileText,
-          show: true,
-        },
-        { label: "Users", path: "/admin/users", icon: Users, show: true },
-        {
-          label: "Analytics",
-          path: "/admin/analytics",
-          icon: BarChart3,
-          show: true,
-        },
       ];
     }
 
@@ -296,8 +303,20 @@ const NavBar = ({ sidebarOpen }) => {
   // Fetch unread message count
   const fetchUnreadCount = React.useCallback(async () => {
     try {
+      // Only fetch if user is authenticated
+      if (!user) {
+        return;
+      }
+
       const { messageAPI } = await import("./api");
       const response = await messageAPI.getConversations();
+
+      // Check if response is valid
+      if (!response || !response.data) {
+        console.warn("Invalid response from getConversations");
+        return;
+      }
+
       const conversations = response.data.data || [];
       const totalUnread = conversations.reduce(
         (sum, conv) => sum + (conv.unreadCount || 0),
@@ -305,9 +324,13 @@ const NavBar = ({ sidebarOpen }) => {
       );
       setUnreadMessageCount(totalUnread);
     } catch (error) {
-      console.error("Error fetching unread count:", error);
+      // Silently fail - don't show error to user for background fetch
+      // Only log if it's not a timeout or auth error
+      if (error.code !== "ECONNABORTED" && error.response?.status !== 401) {
+        console.error("Error fetching unread count:", error);
+      }
     }
-  }, []);
+  }, [user]);
 
   // Initial fetch and periodic refresh
   React.useEffect(() => {
@@ -370,6 +393,12 @@ const NavBar = ({ sidebarOpen }) => {
         icon: Search,
         show: !isAdmin(),
       },
+      {
+        label: "Medical News",
+        path: "/news",
+        icon: Newspaper,
+        show: !isAdmin(),
+      },
     ];
 
     if (isJunior()) {
@@ -380,6 +409,12 @@ const NavBar = ({ sidebarOpen }) => {
           label: "My Applications",
           path: "/applications",
           icon: FileText,
+          show: true,
+        },
+        {
+          label: "Appointments",
+          path: "/appointments",
+          icon: Calendar,
           show: true,
         },
         {
@@ -414,6 +449,12 @@ const NavBar = ({ sidebarOpen }) => {
           show: true,
         },
         {
+          label: "Appointments",
+          path: "/appointments",
+          icon: Calendar,
+          show: true,
+        },
+        {
           label: "Messages",
           path: "/messages",
           icon: MessageSquare,
@@ -437,19 +478,6 @@ const NavBar = ({ sidebarOpen }) => {
           show: true,
         },
         { label: "Admin Panel", path: "/admin", icon: Settings, show: true },
-        {
-          label: "Verifications",
-          path: "/admin/verifications",
-          icon: FileText,
-          show: true,
-        },
-        { label: "Users", path: "/admin/users", icon: Users, show: true },
-        {
-          label: "Analytics",
-          path: "/admin/analytics",
-          icon: BarChart3,
-          show: true,
-        },
       ];
     }
 
@@ -831,6 +859,16 @@ const AppContent = () => {
           }
         />
 
+        {/* Appointments Route */}
+        <Route
+          path="/appointments"
+          element={
+            <ProtectedRoute requireActive={true}>
+              <AppointmentsList />
+            </ProtectedRoute>
+          }
+        />
+
         {/* Notification Routes */}
         <Route
           path="/notifications"
@@ -841,10 +879,20 @@ const AppContent = () => {
           }
         />
         <Route
-          path="/settings/notifications"
+          path="/notifications/preferences"
           element={
             <ProtectedRoute requireActive={true}>
               <NotificationPreferences />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Medical News Route */}
+        <Route
+          path="/news"
+          element={
+            <ProtectedRoute requireActive={true}>
+              <MedicalNews />
             </ProtectedRoute>
           }
         />

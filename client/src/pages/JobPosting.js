@@ -11,7 +11,7 @@ const JobPosting = () => {
   const { jobId } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { user, isSenior } = useAuth();
+  const { user, isSenior, refreshSubscription } = useAuth();
   const isEditing = Boolean(jobId);
 
   const [errors, setErrors] = useState({});
@@ -92,20 +92,53 @@ const JobPosting = () => {
   // Create mutation
   const createMutation = useMutation({
     mutationFn: (data) => jobAPI.create(data),
-    onSuccess: () => {
+    onSuccess: async () => {
       toast.success("Job posted successfully!");
       queryClient.invalidateQueries(["my-jobs"]);
+      // Refresh subscription data to update usage counter
+      await refreshSubscription();
       setTimeout(() => navigate("/jobs/manage"), 1500);
     },
     onError: (error) => {
       const errorInfo = handleApiError(error);
-      toast.error(errorInfo.message);
-      if (errorInfo.errors) {
-        const fieldErrors = {};
-        errorInfo.errors.forEach((err) => {
-          fieldErrors[err.field] = err.message;
-        });
-        setErrors(fieldErrors);
+
+      // Special handling for subscription limit errors (429)
+      if (error.response?.status === 429) {
+        const data = error.response?.data || {};
+        const used = data.used ?? "N/A";
+        const limit = data.limit ?? "N/A";
+
+        const usageText =
+          used !== "N/A" && limit !== "N/A"
+            ? `You've used ${used}/${limit} job postings this month.`
+            : "Please upgrade your plan to continue.";
+
+        toast.error(
+          `${data.message || "Usage limit reached"}\n\n${usageText}`,
+          { duration: 6000 }
+        );
+
+        // Show upgrade prompt if available
+        if (data.upgradeInfo) {
+          setTimeout(() => {
+            const shouldUpgrade = window.confirm(
+              `${data.upgradeInfo.message}\n\nUpgrade to ${data.upgradeInfo.nextPlan} plan for higher limits?\n\nClick OK to view plans.`
+            );
+            if (shouldUpgrade) {
+              navigate("/subscription/plans");
+            }
+          }, 1000);
+        }
+      } else {
+        // Regular error handling
+        toast.error(errorInfo.message);
+        if (errorInfo.errors) {
+          const fieldErrors = {};
+          errorInfo.errors.forEach((err) => {
+            fieldErrors[err.field] = err.message;
+          });
+          setErrors(fieldErrors);
+        }
       }
     },
   });
@@ -113,10 +146,12 @@ const JobPosting = () => {
   // Update mutation
   const updateMutation = useMutation({
     mutationFn: (data) => jobAPI.update(jobId, data),
-    onSuccess: () => {
+    onSuccess: async () => {
       toast.success("Job updated successfully!");
       queryClient.invalidateQueries(["job", jobId]);
       queryClient.invalidateQueries(["my-jobs"]);
+      // Refresh subscription data to update usage counter
+      await refreshSubscription();
       setTimeout(() => navigate("/jobs/manage"), 1500);
     },
     onError: (error) => {
@@ -138,29 +173,45 @@ const JobPosting = () => {
 
     switch (field) {
       case "title":
-        if (!value || value.length < 10) {
-          newErrors.title = "Title must be at least 10 characters";
+        if (!value || value.trim().length === 0) {
+          newErrors.title = "Job title is required";
+        } else if (value.trim().length < 10) {
+          newErrors.title = `Title must be at least 10 characters (currently ${
+            value.trim().length
+          })`;
+        } else if (value.trim().length > 100) {
+          newErrors.title = "Title cannot exceed 100 characters";
+        } else if (!/^[a-zA-Z0-9\s\-.,:;]+$/.test(value)) {
+          newErrors.title = "Title contains invalid characters";
         } else {
           delete newErrors.title;
         }
         break;
       case "description":
-        if (!value || value.length < 50) {
-          newErrors.description = "Description must be at least 50 characters";
+        if (!value || value.trim().length === 0) {
+          newErrors.description = "Job description is required";
+        } else if (value.trim().length < 50) {
+          newErrors.description = `Description must be at least 50 characters (currently ${
+            value.trim().length
+          })`;
+        } else if (value.trim().length > 2000) {
+          newErrors.description = "Description cannot exceed 2000 characters";
         } else {
           delete newErrors.description;
         }
         break;
       case "category":
         if (!value) {
-          newErrors.category = "Category is required";
+          newErrors.category = "Please select a job category";
         } else {
           delete newErrors.category;
         }
         break;
       case "specialty":
-        if (!value) {
-          newErrors.specialty = "Specialty is required";
+        if (!value || value.trim().length === 0) {
+          newErrors.specialty = "Medical specialty is required";
+        } else if (value.trim().length < 2) {
+          newErrors.specialty = "Specialty must be at least 2 characters";
         } else {
           delete newErrors.specialty;
         }
@@ -210,29 +261,137 @@ const JobPosting = () => {
   const validateForm = () => {
     const newErrors = {};
 
-    if (!formData.title || formData.title.length < 10) {
-      newErrors.title = "Title must be at least 10 characters";
+    // Title validation
+    if (!formData.title || formData.title.trim().length === 0) {
+      newErrors.title = "Job title is required";
+    } else if (formData.title.trim().length < 10) {
+      newErrors.title = `Title must be at least 10 characters (currently ${
+        formData.title.trim().length
+      })`;
+    } else if (formData.title.trim().length > 100) {
+      newErrors.title = "Title cannot exceed 100 characters";
+    } else if (!/^[a-zA-Z0-9\s\-\.\,\:\;]+$/.test(formData.title)) {
+      newErrors.title =
+        "Title contains invalid characters (only letters, numbers, and basic punctuation allowed)";
     }
-    if (!formData.category) newErrors.category = "Category is required";
-    if (!formData.description || formData.description.length < 50) {
-      newErrors.description = "Description must be at least 50 characters";
+
+    // Category validation
+    if (!formData.category) {
+      newErrors.category = "Please select a job category";
     }
-    if (!formData.specialty) newErrors.specialty = "Specialty is required";
+
+    // Description validation
+    if (!formData.description || formData.description.trim().length === 0) {
+      newErrors.description = "Job description is required";
+    } else if (formData.description.trim().length < 50) {
+      newErrors.description = `Description must be at least 50 characters (currently ${
+        formData.description.trim().length
+      })`;
+    } else if (formData.description.trim().length > 2000) {
+      newErrors.description = "Description cannot exceed 2000 characters";
+    }
+
+    // Specialty validation
+    if (!formData.specialty || formData.specialty.trim().length === 0) {
+      newErrors.specialty = "Medical specialty is required";
+    } else if (formData.specialty.trim().length < 2) {
+      newErrors.specialty = "Specialty must be at least 2 characters";
+    }
+
+    // Experience level validation
     if (!formData.experience_required.level) {
-      newErrors["experience_required.level"] = "Experience level is required";
+      newErrors["experience_required.level"] =
+        "Please select required experience level";
     }
-    if (!formData.experience_required.minimum_years) {
+
+    // Minimum years validation
+    if (
+      !formData.experience_required.minimum_years &&
+      formData.experience_required.minimum_years !== 0
+    ) {
       newErrors["experience_required.minimum_years"] =
-        "Minimum years is required";
+        "Minimum years of experience is required";
+    } else {
+      const years = parseInt(formData.experience_required.minimum_years, 10);
+      if (isNaN(years)) {
+        newErrors["experience_required.minimum_years"] =
+          "Please enter a valid number";
+      } else if (years < 0) {
+        newErrors["experience_required.minimum_years"] =
+          "Years cannot be negative";
+      } else if (years > 50) {
+        newErrors["experience_required.minimum_years"] =
+          "Years cannot exceed 50";
+      }
     }
-    if (formData.budget.type !== "negotiable" && !formData.budget.amount) {
-      newErrors["budget.amount"] = "Budget amount is required";
+
+    // Budget validation
+    if (formData.budget.type !== "negotiable") {
+      if (!formData.budget.amount) {
+        newErrors["budget.amount"] =
+          "Budget amount is required (or select 'negotiable')";
+      } else {
+        const amount = parseFloat(formData.budget.amount);
+        if (isNaN(amount)) {
+          newErrors["budget.amount"] = "Please enter a valid amount";
+        } else if (amount <= 0) {
+          newErrors["budget.amount"] = "Budget must be greater than 0";
+        } else if (amount > 1000000) {
+          newErrors["budget.amount"] = "Budget cannot exceed $1,000,000";
+        }
+      }
     }
+
+    // Deadline validation
     if (!formData.timeline.deadline) {
-      newErrors["timeline.deadline"] = "Deadline is required";
+      newErrors["timeline.deadline"] = "Application deadline is required";
+    } else {
+      const deadline = new Date(formData.timeline.deadline);
+      const now = new Date();
+      const minDate = new Date(now.getTime() + 24 * 60 * 60 * 1000); // 24 hours from now
+      const maxDate = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000); // 1 year from now
+
+      if (isNaN(deadline.getTime())) {
+        newErrors["timeline.deadline"] = "Please enter a valid date";
+      } else if (deadline <= minDate) {
+        newErrors["timeline.deadline"] =
+          "Deadline must be at least 24 hours from now";
+      } else if (deadline > maxDate) {
+        newErrors["timeline.deadline"] =
+          "Deadline cannot be more than 1 year in the future";
+      }
+    }
+
+    // Estimated hours validation (if hourly)
+    if (
+      formData.budget.type === "hourly" &&
+      formData.timeline.estimated_hours
+    ) {
+      const hours = parseInt(formData.timeline.estimated_hours, 10);
+      if (isNaN(hours)) {
+        newErrors["timeline.estimated_hours"] =
+          "Please enter a valid number of hours";
+      } else if (hours < 1) {
+        newErrors["timeline.estimated_hours"] =
+          "Estimated hours must be at least 1";
+      } else if (hours > 1000) {
+        newErrors["timeline.estimated_hours"] =
+          "Estimated hours cannot exceed 1000";
+      }
     }
 
     setErrors(newErrors);
+
+    // Show a summary toast if there are errors
+    if (Object.keys(newErrors).length > 0) {
+      const errorCount = Object.keys(newErrors).length;
+      toast.error(
+        `Please fix ${errorCount} validation error${
+          errorCount > 1 ? "s" : ""
+        } before submitting`
+      );
+    }
+
     return Object.keys(newErrors).length === 0;
   };
 
@@ -243,7 +402,32 @@ const JobPosting = () => {
       return;
     }
 
-    const submitData = { ...formData, status: "active" };
+    // Convert numeric fields from strings to numbers
+    const submitData = {
+      ...formData,
+      // Only set status to "active" for new jobs, preserve existing status when editing
+      ...(isEditing ? {} : { status: "active" }),
+      experience_required: {
+        ...formData.experience_required,
+        minimum_years: formData.experience_required.minimum_years
+          ? parseInt(formData.experience_required.minimum_years, 10)
+          : 0,
+      },
+      budget: {
+        ...formData.budget,
+        amount:
+          formData.budget.type !== "negotiable" && formData.budget.amount
+            ? parseFloat(formData.budget.amount)
+            : undefined,
+      },
+      timeline: {
+        ...formData.timeline,
+        estimated_hours: formData.timeline.estimated_hours
+          ? parseInt(formData.timeline.estimated_hours, 10)
+          : undefined,
+      },
+    };
+
     if (isEditing) {
       updateMutation.mutate(submitData);
     } else {
@@ -332,6 +516,24 @@ const JobPosting = () => {
               : "Find the right medical professional"}
           </p>
         </div>
+
+        {/* Requirements Summary */}
+        {!isEditing && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+            <h3 className="font-semibold text-blue-900 mb-2 flex items-center gap-2">
+              <AlertCircle className="w-5 h-5" />
+              Required Information
+            </h3>
+            <ul className="text-sm text-blue-800 space-y-1 ml-7">
+              <li>• Job title (10-100 characters)</li>
+              <li>• Category and medical specialty</li>
+              <li>• Detailed description (50-2000 characters)</li>
+              <li>• Experience level and minimum years required</li>
+              <li>• Budget (fixed, hourly, or negotiable)</li>
+              <li>• Application deadline (at least 24 hours from now)</li>
+            </ul>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-6">
           {/* Basic Information */}
@@ -480,6 +682,11 @@ const JobPosting = () => {
                     <option value="senior">Senior (7+ years)</option>
                     <option value="attending">Attending</option>
                   </select>
+                  {errors["experience_required.level"] && (
+                    <p className="text-sm text-red-600 mt-1">
+                      {errors["experience_required.level"]}
+                    </p>
+                  )}
                 </div>
 
                 <div>
@@ -504,6 +711,11 @@ const JobPosting = () => {
                     min="0"
                     max="50"
                   />
+                  {errors["experience_required.minimum_years"] && (
+                    <p className="text-sm text-red-600 mt-1">
+                      {errors["experience_required.minimum_years"]}
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -597,7 +809,11 @@ const JobPosting = () => {
                     onChange={(e) =>
                       handleNestedChange("timeline", "deadline", e.target.value)
                     }
-                    min={new Date().toISOString().split("T")[0]}
+                    min={
+                      new Date(Date.now() + 2 * 24 * 60 * 60 * 1000)
+                        .toISOString()
+                        .split("T")[0]
+                    }
                     className={`w-full px-3 py-2 border rounded-lg ${
                       errors["timeline.deadline"] ? "border-red-500" : ""
                     }`}
@@ -607,6 +823,9 @@ const JobPosting = () => {
                       {errors["timeline.deadline"]}
                     </p>
                   )}
+                  <p className="text-xs text-gray-500 mt-1">
+                    Must be at least 24 hours from now
+                  </p>
                 </div>
 
                 {formData.budget.type === "hourly" && (
@@ -624,10 +843,23 @@ const JobPosting = () => {
                           e.target.value
                         )
                       }
-                      className="w-full px-3 py-2 border rounded-lg"
+                      className={`w-full px-3 py-2 border rounded-lg ${
+                        errors["timeline.estimated_hours"]
+                          ? "border-red-500"
+                          : ""
+                      }`}
                       min="1"
+                      max="1000"
                       placeholder="40"
                     />
+                    {errors["timeline.estimated_hours"] && (
+                      <p className="text-sm text-red-600 mt-1">
+                        {errors["timeline.estimated_hours"]}
+                      </p>
+                    )}
+                    <p className="text-xs text-gray-500 mt-1">
+                      Approximate hours needed (1-1000)
+                    </p>
                   </div>
                 )}
               </div>

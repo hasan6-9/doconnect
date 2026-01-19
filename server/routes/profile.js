@@ -161,7 +161,15 @@ const validateExperience = [
     .withMessage("Start date must be a valid date")
     .toDate(),
   body("endDate")
-    .optional()
+    .custom((value, { req }) => {
+      const isCurrent =
+        req.body.current === true || req.body.current === "true";
+      if (!isCurrent && !value) {
+        throw new Error("End date is required for past experiences");
+      }
+      return true;
+    })
+    .if((value) => value)
     .isISO8601()
     .withMessage("End date must be a valid date")
     .toDate(),
@@ -228,7 +236,7 @@ const validateCertification = [
     .withMessage("Issue date must be a valid date")
     .toDate(),
   body("expirationDate")
-    .optional()
+    .optional({ nullable: true, checkFalsy: true })
     .isISO8601()
     .withMessage("Expiration date must be a valid date")
     .toDate(),
@@ -238,7 +246,7 @@ const validateCertification = [
     .withMessage("Credential ID cannot exceed 100 characters")
     .trim(),
   body("credentialUrl")
-    .optional()
+    .optional({ nullable: true, checkFalsy: true })
     .isURL()
     .withMessage("Credential URL must be a valid URL"),
 ];

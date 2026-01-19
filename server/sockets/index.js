@@ -12,6 +12,17 @@ const messageQueue = require("../utils/messageQueue");
  * @param {SocketMonitor} socketMonitor - Socket monitor instance for tracking
  */
 module.exports = (io, socketMonitor) => {
+  // ========================================================================
+  // ADMIN NAMESPACE - Real-Time Admin Dashboard
+  // ========================================================================
+  const adminSocketHandlers = require("./adminSocket")(io);
+
+  // Export admin event emitters for use in other modules
+  module.exports.adminEvents = adminSocketHandlers;
+
+  // ========================================================================
+  // MAIN NAMESPACE - User Messaging & Notifications
+  // ========================================================================
   io.on("connection", (socket) => {
     const user = socket.user;
     console.log(
@@ -57,14 +68,28 @@ module.exports = (io, socketMonitor) => {
         socket.join(`conversation:${conversationId}`);
         console.log(`User ${user._id} joined conversation ${conversationId}`);
 
-        // Mark messages as read
+        // Mark messages as delivered first (if they were only sent)
         await Message.updateMany(
           {
             conversationId,
             recipient: user._id,
-            readAt: null,
+            status: "sent",
           },
           {
+            status: "delivered",
+            deliveredAt: new Date(),
+          }
+        );
+
+        // Then mark messages as read
+        const readResult = await Message.updateMany(
+          {
+            conversationId,
+            recipient: user._id,
+            status: { $in: ["sent", "delivered"] },
+          },
+          {
+            status: "read",
             readAt: new Date(),
           }
         );
@@ -75,10 +100,13 @@ module.exports = (io, socketMonitor) => {
 
         // Notify other participant that messages were read
         const otherParticipantId = conversation.getOtherParticipant(user._id);
-        io.to(`user:${otherParticipantId}`).emit("messages_read", {
-          conversationId,
-          readBy: user._id,
-        });
+        if (readResult.modifiedCount > 0) {
+          io.to(`user:${otherParticipantId}`).emit("messages_read", {
+            conversationId,
+            readBy: user._id,
+            readAt: new Date(),
+          });
+        }
       } catch (error) {
         console.error("Error joining conversation:", error);
         socket.emit("error", { message: "Failed to join conversation" });
@@ -146,6 +174,24 @@ module.exports = (io, socketMonitor) => {
         // Emit message to conversation room
         io.to(`conversation:${conversationId}`).emit("new_message", message);
 
+        // Emit delivery receipt if recipient is online
+        const recipientSockets = await io
+          .in(`user:${recipientId}`)
+          .fetchSockets();
+        if (recipientSockets.length > 0) {
+          // Recipient is online, mark as delivered
+          message.status = "delivered";
+          message.deliveredAt = new Date();
+          await message.save();
+
+          // Notify sender about delivery
+          socket.emit("message_delivered", {
+            messageId: message._id,
+            conversationId,
+            deliveredAt: message.deliveredAt,
+          });
+        }
+
         // Create and emit notification to recipient
         try {
           const notification = await Notification.create({
@@ -181,7 +227,10 @@ module.exports = (io, socketMonitor) => {
         }
 
         // Acknowledge to sender
-        socket.emit("message_sent", { messageId: message._id });
+        socket.emit("message_sent", {
+          messageId: message._id,
+          status: message.status,
+        });
       } catch (error) {
         console.error("Error sending message:", error);
         socket.emit("error", { message: "Failed to send message" });
@@ -234,20 +283,67 @@ module.exports = (io, socketMonitor) => {
     });
 
     /**
-     * Mark message as read
+     * Mark messages as delivered
      */
-    socket.on("mark_as_read", async (data) => {
+    socket.on("mark_as_delivered", async (data) => {
       try {
-        const { messageId, conversationId } = data;
+        const { messageIds, conversationId } = data;
 
-        const message = await Message.findById(messageId);
-
-        if (!message || message.recipient.toString() !== user._id.toString()) {
+        if (!messageIds || !Array.isArray(messageIds)) {
           return;
         }
 
-        message.readAt = new Date();
-        await message.save();
+        // Update messages to delivered status
+        await Message.updateMany(
+          {
+            _id: { $in: messageIds },
+            recipient: user._id,
+            status: "sent",
+          },
+          {
+            status: "delivered",
+            deliveredAt: new Date(),
+          }
+        );
+
+        // Get the sender from the first message
+        const firstMessage = await Message.findById(messageIds[0]);
+        if (firstMessage) {
+          // Notify sender
+          io.to(`user:${firstMessage.sender}`).emit("messages_delivered", {
+            messageIds,
+            conversationId,
+            deliveredAt: new Date(),
+          });
+        }
+      } catch (error) {
+        console.error("Error marking messages as delivered:", error);
+      }
+    });
+
+    /**
+     * Mark messages as read
+     */
+    socket.on("mark_as_read", async (data) => {
+      try {
+        const { messageIds, conversationId } = data;
+
+        if (!messageIds || !Array.isArray(messageIds)) {
+          return;
+        }
+
+        // Update messages to read status
+        await Message.updateMany(
+          {
+            _id: { $in: messageIds },
+            recipient: user._id,
+            status: { $in: ["sent", "delivered"] },
+          },
+          {
+            status: "read",
+            readAt: new Date(),
+          }
+        );
 
         // Update conversation unread count
         const conversation = await Conversation.findById(conversationId);
@@ -256,14 +352,18 @@ module.exports = (io, socketMonitor) => {
           await conversation.save();
         }
 
-        // Notify sender
-        io.to(`user:${message.sender}`).emit("message_read", {
-          messageId,
-          conversationId,
-          readAt: message.readAt,
-        });
+        // Get the sender from the first message
+        const firstMessage = await Message.findById(messageIds[0]);
+        if (firstMessage) {
+          // Notify sender
+          io.to(`user:${firstMessage.sender}`).emit("messages_read", {
+            messageIds,
+            conversationId,
+            readAt: new Date(),
+          });
+        }
       } catch (error) {
-        console.error("Error marking message as read:", error);
+        console.error("Error marking messages as read:", error);
       }
     });
 

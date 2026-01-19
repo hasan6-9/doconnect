@@ -1,4 +1,3 @@
-// server/controllers/profileController.js - Enhanced Profile Management
 const User = require("../models/User");
 const cloudinary = require("cloudinary").v2;
 const multer = require("multer");
@@ -379,10 +378,20 @@ exports.uploadDocuments = async (req, res) => {
       const { documentTypes } = req.body;
       const files = req.files.documents;
 
-      if (!documentTypes || documentTypes.length !== files.length) {
+      // Normalize documentTypes to array if it's a single string
+      const types = Array.isArray(documentTypes)
+        ? documentTypes
+        : [documentTypes];
+
+      if (!types || types.length !== files.length) {
         return res.status(400).json({
           success: false,
-          message: "Document types must be specified for each file",
+          message:
+            "Document types must be specified for each file. Received " +
+            (types ? types.length : 0) +
+            " types for " +
+            files.length +
+            " files.",
         });
       }
 
@@ -396,14 +405,21 @@ exports.uploadDocuments = async (req, res) => {
 
       try {
         const uploadPromises = files.map(async (file, index) => {
-          const documentType = Array.isArray(documentTypes)
-            ? documentTypes[index]
-            : documentTypes;
+          const documentType = types[index];
+          const isPdf = file.mimetype === "application/pdf";
 
           const result = await uploadToCloudinary(file.buffer, {
             folder: `doconnect/documents/${user._id}`,
-            public_id: `${documentType}_${Date.now()}`,
-            resource_type: "auto",
+            public_id: `${documentType}_${Date.now()}${isPdf ? ".pdf" : ""}`,
+            resource_type: isPdf ? "raw" : "auto",
+            type: "upload",
+          });
+
+          console.log("Cloudinary upload result:", {
+            public_id: result.public_id,
+            url: result.secure_url,
+            format: result.format,
+            resource_type: result.resource_type,
           });
 
           return {
@@ -475,7 +491,7 @@ exports.deleteDocument = async (req, res) => {
     }
 
     // Remove from user documents
-    document.remove();
+    user.documents.pull(document._id);
     await user.save();
 
     res.status(200).json({
@@ -599,7 +615,7 @@ exports.deleteExperience = async (req, res) => {
       });
     }
 
-    experience.remove();
+    user.experiences.pull(experience._id);
     await user.save();
 
     res.status(200).json({
@@ -763,7 +779,7 @@ exports.deleteCertification = async (req, res) => {
       });
     }
 
-    certification.remove();
+    user.certifications.pull(certification._id);
     await user.save();
 
     res.status(200).json({

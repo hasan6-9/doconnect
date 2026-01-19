@@ -529,6 +529,66 @@ exports.getVerificationStats = async (req, res) => {
   }
 };
 
+// @desc    Get live metrics (lightweight for polling)
+// @route   GET /api/admin/metrics/live
+// @access  Private/Admin
+exports.getLiveMetrics = async (req, res) => {
+  try {
+    // Get only essential metrics for real-time updates
+    const [
+      totalUsers,
+      activeUsers,
+      pendingVerification,
+      activeJobs,
+      pendingIdentity,
+      pendingMedicalLicense,
+      pendingBackgroundCheck,
+    ] = await Promise.all([
+      User.countDocuments(),
+      User.countDocuments({ accountStatus: "active" }),
+      User.countDocuments({
+        "verificationStatus.overall": { $in: ["unverified", "partial"] },
+      }),
+      require("../models/Job").countDocuments({ status: "active" }),
+      User.countDocuments({ "verificationStatus.identity": "pending" }),
+      User.countDocuments({ "verificationStatus.medical_license": "pending" }),
+      User.countDocuments({
+        "verificationStatus.background_check": "pending",
+      }),
+    ]);
+
+    const metrics = {
+      users: {
+        total: totalUsers,
+        active: activeUsers,
+      },
+      verification: {
+        pending: pendingVerification,
+        pendingByType: {
+          identity: pendingIdentity,
+          medicalLicense: pendingMedicalLicense,
+          backgroundCheck: pendingBackgroundCheck,
+        },
+      },
+      jobs: {
+        active: activeJobs,
+      },
+      timestamp: new Date().toISOString(),
+    };
+
+    res.status(200).json({
+      success: true,
+      data: metrics,
+    });
+  } catch (error) {
+    console.error("Error fetching live metrics:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while fetching live metrics",
+    });
+  }
+};
+
 // @desc    Get admin dashboard data
 // @route   GET /api/admin/dashboard
 // @access  Private/Admin
@@ -742,5 +802,6 @@ module.exports = {
   verifyBackgroundCheck: exports.verifyBackgroundCheck,
   bulkVerification: exports.bulkVerification,
   getVerificationStats: exports.getVerificationStats,
+  getLiveMetrics: exports.getLiveMetrics,
   getAdminDashboard: exports.getAdminDashboard,
 };
