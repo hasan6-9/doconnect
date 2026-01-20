@@ -404,7 +404,7 @@ exports.login = async (req, res) => {
 
     // Find user and include password
     const user = await User.findOne({ email: email.toLowerCase() }).select(
-      "+password"
+      "+password",
     );
 
     if (!user) {
@@ -643,7 +643,7 @@ exports.logout = async (req, res) => {
         {
           lastActive: new Date(),
         },
-        { validateBeforeSave: false }
+        { validateBeforeSave: false },
       );
     }
 
@@ -666,14 +666,14 @@ const sendTokenResponse = (
   statusCode,
   res,
   message,
-  additionalData = {}
+  additionalData = {},
 ) => {
   // Create token
   const token = user.getSignedJwtToken();
 
   const options = {
     expires: new Date(
-      Date.now() + process.env.JWT_COOKIE_EXPIRE * 24 * 60 * 60 * 1000
+      Date.now() + (process.env.JWT_COOKIE_EXPIRE || 30) * 24 * 60 * 60 * 1000,
     ),
     httpOnly: true,
   };
