@@ -94,7 +94,7 @@ const Dashboard = () => {
   const { metrics: adminDashboardData } = isAdmin()
     ? require("../hooks/useRealtimeMetrics").useRealtimeMetrics(
         adminSocket,
-        adminSocketConnected
+        adminSocketConnected,
       )
     : { metrics: null };
 
@@ -182,7 +182,7 @@ const Dashboard = () => {
                   <p className="text-sm text-gray-500">
                     Renews:{" "}
                     {new Date(
-                      subscription.currentPeriodEnd
+                      subscription.currentPeriodEnd,
                     ).toLocaleDateString()}
                   </p>
                 </div>
@@ -268,7 +268,7 @@ const JuniorDashboard = ({
     {
       label: "Pending",
       value: applications.filter(
-        (a) => a.status === "submitted" || a.status === "under_review"
+        (a) => a.status === "submitted" || a.status === "under_review",
       ).length,
       icon: Clock,
       color: "bg-yellow-100 text-yellow-600",
@@ -481,7 +481,7 @@ const SeniorDashboard = ({
 
   const activeJobs = jobs.filter((j) => j.status === "active").length;
   const pendingApps = applications.filter(
-    (a) => a.status === "submitted" || a.status === "under_review"
+    (a) => a.status === "submitted" || a.status === "under_review",
   ).length;
 
   const stats = [
@@ -807,10 +807,15 @@ const AdminDashboard = ({ adminDashboardData, pendingVerificationsData }) => {
                   </div>
                   <div className="text-right">
                     <span className="text-xs px-2 py-1 bg-yellow-100 text-yellow-800 rounded-full">
-                      {userItem.verificationStatus?.identity === "pending" &&
-                        "ID Pending"}
-                      {userItem.verificationStatus?.medical_license ===
-                        "pending" && "License Pending"}
+                      {(() => {
+                        const vs = userItem.verificationStatus || {};
+                        if (vs.identity === "pending") return "ID Pending";
+                        if (vs.medical_license === "pending")
+                          return "License Pending";
+                        if (vs.background_check === "pending")
+                          return "Background Pending";
+                        return "Pending";
+                      })()}
                     </span>
                     <p className="text-xs text-gray-500 mt-1">
                       {new Date(userItem.createdAt).toLocaleDateString()}

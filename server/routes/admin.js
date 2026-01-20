@@ -8,6 +8,9 @@ const {
   verifyIdentity,
   verifyMedicalLicense,
   verifyBackgroundCheck,
+  revokeVerification,
+  getVerifiedUsers,
+  getRejectedUsers,
   bulkVerification,
   getVerificationStats,
   getLiveMetrics,
@@ -89,12 +92,12 @@ router.get("/verification/stats", validateGetStats, getVerificationStats);
 router.get(
   "/verification/pending",
   validateGetPending,
-  getPendingVerifications
+  getPendingVerifications,
 );
 router.get(
   "/verification/profile/:userId",
   param("userId").isMongoId().withMessage("Invalid user ID"),
-  getProfileForVerification
+  getProfileForVerification,
 );
 
 // Individual verification routes
@@ -102,7 +105,7 @@ router.put(
   "/verification/identity/:userId",
   param("userId").isMongoId().withMessage("Invalid user ID"),
   validateVerificationStatus,
-  verifyIdentity
+  verifyIdentity,
 );
 
 router.put(
@@ -115,7 +118,7 @@ router.put(
       .isBoolean()
       .withMessage("License verified must be a boolean"),
   ],
-  verifyMedicalLicense
+  verifyMedicalLicense,
 );
 
 router.put(
@@ -128,7 +131,30 @@ router.put(
       .isBoolean()
       .withMessage("Background check passed must be a boolean"),
   ],
-  verifyBackgroundCheck
+  verifyBackgroundCheck,
+);
+
+// Get verified/approved doctors
+router.get("/verification/approved", getVerifiedUsers);
+
+// Get rejected users
+router.get("/verification/rejected", getRejectedUsers);
+
+// Revoke verification
+router.put(
+  "/verification/revoke/:userId",
+  param("userId").isMongoId().withMessage("Invalid user ID"),
+  [
+    body("verificationType")
+      .isIn(["identity", "medical_license", "background_check"])
+      .withMessage("Invalid verification type"),
+    body("notes")
+      .optional()
+      .isLength({ max: 1000 })
+      .withMessage("Notes cannot exceed 1000 characters")
+      .trim(),
+  ],
+  revokeVerification,
 );
 
 // Bulk operations

@@ -48,7 +48,7 @@ api.interceptors.request.use(
   (error) => {
     console.error("Request interceptor error:", error);
     return Promise.reject(error);
-  }
+  },
 );
 
 api.interceptors.response.use(
@@ -56,7 +56,7 @@ api.interceptors.response.use(
     if (process.env.NODE_ENV === "development") {
       console.log(
         `✅ ${response.config.method.toUpperCase()} ${response.config.url}`,
-        response.data
+        response.data,
       );
     }
     return response;
@@ -77,7 +77,7 @@ api.interceptors.response.use(
           status: error.response?.status,
           message: error.response?.data?.message,
           errors: error.response?.data?.errors,
-        }
+        },
       );
     }
 
@@ -97,7 +97,7 @@ api.interceptors.response.use(
     };
 
     return Promise.reject(transformedError);
-  }
+  },
 );
 
 // ============================================================================
@@ -119,7 +119,7 @@ export const adminAPI = {
 
     const queryString = queryParams.toString();
     return api.get(
-      `/admin/verification/pending${queryString ? `?${queryString}` : ""}`
+      `/admin/verification/pending${queryString ? `?${queryString}` : ""}`,
     );
   },
 
@@ -134,6 +134,39 @@ export const adminAPI = {
     api.put(`/admin/verification/background-check/${userId}`, verificationData),
 
   bulkVerification: (bulkData) => api.put("/admin/verification/bulk", bulkData),
+
+  // Revoke verification (set back to pending)
+  revokeVerification: (userId, verificationType, notes = "") =>
+    api.put(`/admin/verification/revoke/${userId}`, {
+      verificationType,
+      notes,
+    }),
+
+  // Get all verified/approved doctors
+  getVerifiedUsers: (params = {}) => {
+    const queryParams = new URLSearchParams();
+    if (params.page) queryParams.append("page", params.page);
+    if (params.limit) queryParams.append("limit", params.limit);
+    if (params.search) queryParams.append("search", params.search);
+
+    const queryString = queryParams.toString();
+    return api.get(
+      `/admin/verification/approved${queryString ? `?${queryString}` : ""}`,
+    );
+  },
+
+  // Get all rejected users
+  getRejectedUsers: (params = {}) => {
+    const queryParams = new URLSearchParams();
+    if (params.page) queryParams.append("page", params.page);
+    if (params.limit) queryParams.append("limit", params.limit);
+    if (params.search) queryParams.append("search", params.search);
+
+    const queryString = queryParams.toString();
+    return api.get(
+      `/admin/verification/rejected${queryString ? `?${queryString}` : ""}`,
+    );
+  },
 
   // === Job Management (NEW) ===
   getAllJobs: (params = {}) => {
@@ -163,7 +196,7 @@ export const adminAPI = {
 
     const queryString = queryParams.toString();
     return api.get(
-      `/applications/admin/all${queryString ? `?${queryString}` : ""}`
+      `/applications/admin/all${queryString ? `?${queryString}` : ""}`,
     );
   },
 
@@ -227,7 +260,7 @@ export const profileAPI = {
       onUploadProgress: (progressEvent) => {
         if (onProgress && progressEvent.total) {
           const percentCompleted = Math.round(
-            (progressEvent.loaded * 100) / progressEvent.total
+            (progressEvent.loaded * 100) / progressEvent.total,
           );
           onProgress(percentCompleted);
         }
@@ -252,7 +285,7 @@ export const profileAPI = {
       onUploadProgress: (progressEvent) => {
         if (onProgress && progressEvent.total) {
           const percentCompleted = Math.round(
-            (progressEvent.loaded * 100) / progressEvent.total
+            (progressEvent.loaded * 100) / progressEvent.total,
           );
           onProgress(percentCompleted);
         }
@@ -449,7 +482,7 @@ export const messageAPI = {
     fileUrl = null,
     fileName = null,
     fileSize = null,
-    replyTo = null
+    replyTo = null,
   ) =>
     api.post(`/messages/conversations/${conversationId}/messages`, {
       content,
@@ -479,7 +512,7 @@ export const messageAPI = {
       onUploadProgress: (progressEvent) => {
         if (onProgress && progressEvent.total) {
           const percentCompleted = Math.round(
-            (progressEvent.loaded * 100) / progressEvent.total
+            (progressEvent.loaded * 100) / progressEvent.total,
           );
           onProgress(percentCompleted);
         }
@@ -593,7 +626,7 @@ export const handleApiError = (error) => {
 export const validateFile = (
   file,
   maxSize = 10 * 1024 * 1024,
-  allowedTypes = []
+  allowedTypes = [],
 ) => {
   const errors = [];
 

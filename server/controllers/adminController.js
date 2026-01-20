@@ -47,7 +47,13 @@ exports.getPendingVerifications = async (req, res) => {
       });
     }
 
-    let query = { accountStatus: { $in: ["active", "pending"] } };
+    let query = {
+      accountStatus: { $in: ["active", "pending"] },
+      // Exclude users with any rejected verification
+      "verificationStatus.identity": { $ne: "rejected" },
+      "verificationStatus.medical_license": { $ne: "rejected" },
+      "verificationStatus.background_check": { $ne: "rejected" },
+    };
 
     // Filter by verification type
     if (type !== "all") {
@@ -64,7 +70,7 @@ exports.getPendingVerifications = async (req, res) => {
 
     const profiles = await User.find(query)
       .select(
-        "firstName lastName email profilePhoto verificationStatus documents createdAt primarySpecialty medicalLicenseNumber licenseState yearsOfExperience medicalSchool accountStatus role"
+        "firstName lastName email profilePhoto verificationStatus documents createdAt primarySpecialty medicalLicenseNumber licenseState yearsOfExperience medicalSchool accountStatus role",
       )
       .populate("documents")
       .sort({ createdAt: -1 })
@@ -347,6 +353,191 @@ exports.verifyBackgroundCheck = async (req, res) => {
   }
 };
 
+// @desc    Revoke verification status (set back to pending)
+// @route   PUT /api/admin/verification/revoke/:userId
+// @access  Private/Admin
+exports.revokeVerification = async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: "Validation error",
+        errors: errors.array(),
+      });
+    }
+
+    const { userId } = req.params;
+
+    // Validate ObjectId
+    if (!isValidObjectId(userId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid user ID format",
+      });
+    }
+
+    const { verificationType, notes } = req.body;
+
+    if (
+      !["identity", "medical_license", "background_check"].includes(
+        verificationType,
+      )
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Invalid verification type. Must be: identity, medical_license, or background_check",
+      });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Revoke the verification (set to pending)
+    user.verificationStatus[verificationType] = "pending";
+
+    // Update overall verification status
+    user.updateVerificationStatus();
+
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: `${verificationType.replace("_", " ")} verification revoked successfully`,
+      data: {
+        verificationStatus: user.verificationStatus,
+        overallStatus: user.verificationStatus.overall,
+      },
+    });
+  } catch (error) {
+    console.error("Error revoking verification:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while revoking verification",
+    });
+  }
+};
+
+// @desc    Get all verified/approved doctors
+// @route   GET /api/admin/verification/approved
+// @access  Private/Admin
+exports.getVerifiedUsers = async (req, res) => {
+  try {
+    const { page = 1, limit = 20, search = "" } = req.query;
+
+    // Query for users with identity verified (approved doctors)
+    let query = {
+      "verificationStatus.identity": "verified",
+    };
+
+    // Add search filter if provided
+    if (search) {
+      query.$or = [
+        { firstName: { $regex: search, $options: "i" } },
+        { lastName: { $regex: search, $options: "i" } },
+        { email: { $regex: search, $options: "i" } },
+      ];
+    }
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const profiles = await User.find(query)
+      .select(
+        "firstName lastName email profilePhoto verificationStatus documents createdAt primarySpecialty medicalLicenseNumber licenseState yearsOfExperience medicalSchool accountStatus role",
+      )
+      .sort({ updatedAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit));
+
+    const total = await User.countDocuments(query);
+
+    res.status(200).json({
+      success: true,
+      data: profiles,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / parseInt(limit)),
+      },
+    });
+  } catch (error) {
+    console.error("Error fetching verified users:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while fetching verified users",
+    });
+  }
+};
+
+// @desc    Get all rejected users (any verification type rejected)
+// @route   GET /api/admin/verification/rejected
+// @access  Private/Admin
+exports.getRejectedUsers = async (req, res) => {
+  try {
+    const { page = 1, limit = 20, search = "" } = req.query;
+
+    let query = {
+      $or: [
+        { "verificationStatus.identity": "rejected" },
+        { "verificationStatus.medical_license": "rejected" },
+        { "verificationStatus.background_check": "rejected" },
+      ],
+    };
+
+    // Add search filter if provided
+    if (search) {
+      query = {
+        $and: [
+          query,
+          {
+            $or: [
+              { firstName: { $regex: search, $options: "i" } },
+              { lastName: { $regex: search, $options: "i" } },
+              { email: { $regex: search, $options: "i" } },
+            ],
+          },
+        ],
+      };
+    }
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const profiles = await User.find(query)
+      .select(
+        "firstName lastName email profilePhoto verificationStatus documents createdAt primarySpecialty medicalLicenseNumber licenseState yearsOfExperience medicalSchool accountStatus role",
+      )
+      .sort({ updatedAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit));
+
+    const total = await User.countDocuments(query);
+
+    res.status(200).json({
+      success: true,
+      data: profiles,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / parseInt(limit)),
+      },
+    });
+  } catch (error) {
+    console.error("Error fetching rejected users:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while fetching rejected users",
+    });
+  }
+};
+
 // @desc    Bulk verification action
 // @route   PUT /api/admin/verification/bulk
 // @access  Private/Admin
@@ -385,7 +576,7 @@ exports.bulkVerification = async (req, res) => {
 
     const result = await User.updateMany(
       { _id: { $in: userIds } },
-      updateQuery
+      updateQuery,
     );
 
     // Update overall verification status for each user
@@ -450,25 +641,72 @@ exports.getVerificationStats = async (req, res) => {
     const totalUsers = await User.countDocuments({
       accountStatus: { $in: ["active", "pending"] },
     });
+
+    // Fully Verified: All 3 verifications approved
     const verifiedUsers = await User.countDocuments({
-      "verificationStatus.overall": "verified",
-    });
-    const partiallyVerified = await User.countDocuments({
-      "verificationStatus.overall": "partial",
-    });
-    const unverified = await User.countDocuments({
-      "verificationStatus.overall": "unverified",
+      "verificationStatus.identity": "verified",
+      "verificationStatus.medical_license": "verified",
+      "verificationStatus.background_check": "verified",
     });
 
-    // Pending verifications
+    // Partially Verified: At least one verified but not all three
+    // (has at least one pending or mix of verified/pending)
+    const partiallyVerified = await User.countDocuments({
+      $and: [
+        // At least one is verified
+        {
+          $or: [
+            { "verificationStatus.identity": "verified" },
+            { "verificationStatus.medical_license": "verified" },
+            { "verificationStatus.background_check": "verified" },
+          ],
+        },
+        // But NOT all three are verified
+        {
+          $or: [
+            { "verificationStatus.identity": { $ne: "verified" } },
+            { "verificationStatus.medical_license": { $ne: "verified" } },
+            { "verificationStatus.background_check": { $ne: "verified" } },
+          ],
+        },
+      ],
+    });
+
+    // Unverified: None are verified (all pending or unverified)
+    const unverified = await User.countDocuments({
+      "verificationStatus.identity": { $ne: "verified" },
+      "verificationStatus.medical_license": { $ne: "verified" },
+      "verificationStatus.background_check": { $ne: "verified" },
+    });
+
+    // Pending verifications (excluding users with any rejected verification)
+    // Using $and to avoid MongoDB query key conflicts
     const pendingIdentity = await User.countDocuments({
       "verificationStatus.identity": "pending",
+      "verificationStatus.medical_license": { $ne: "rejected" },
+      "verificationStatus.background_check": { $ne: "rejected" },
     });
     const pendingMedicalLicense = await User.countDocuments({
       "verificationStatus.medical_license": "pending",
+      "verificationStatus.identity": { $ne: "rejected" },
+      "verificationStatus.background_check": { $ne: "rejected" },
     });
     const pendingBackgroundCheck = await User.countDocuments({
       "verificationStatus.background_check": "pending",
+      "verificationStatus.identity": { $ne: "rejected" },
+      "verificationStatus.medical_license": { $ne: "rejected" },
+    });
+
+    // Count unique users with ANY pending verification (matching Verification Queue)
+    const pendingUsersTotal = await User.countDocuments({
+      "verificationStatus.identity": { $ne: "rejected" },
+      "verificationStatus.medical_license": { $ne: "rejected" },
+      "verificationStatus.background_check": { $ne: "rejected" },
+      $or: [
+        { "verificationStatus.identity": "pending" },
+        { "verificationStatus.medical_license": "pending" },
+        { "verificationStatus.background_check": "pending" },
+      ],
     });
 
     // Recent activity
@@ -499,7 +737,7 @@ exports.getVerificationStats = async (req, res) => {
         identity: pendingIdentity,
         medicalLicense: pendingMedicalLicense,
         backgroundCheck: pendingBackgroundCheck,
-        total: pendingIdentity + pendingMedicalLicense + pendingBackgroundCheck,
+        total: pendingUsersTotal, // Unique users with any pending verification
       },
       recent: {
         newUsers: recentUsers,
@@ -645,7 +883,7 @@ exports.getAdminDashboard = async (req, res) => {
       ],
     })
       .select(
-        "firstName lastName email verificationStatus accountStatus createdAt"
+        "firstName lastName email verificationStatus accountStatus createdAt",
       )
       .sort({ createdAt: -1 })
       .limit(10);
@@ -692,11 +930,11 @@ exports.getAdminDashboard = async (req, res) => {
           url: "/admin/verification?type=medical_license",
         },
         {
-          label: "Incomplete Profiles",
+          label: "Pending Background Check",
           count: await User.countDocuments({
-            "profileCompletion.percentage": { $lt: 70 },
+            "verificationStatus.background_check": "pending",
           }),
-          url: "/admin/users?filter=incomplete",
+          url: "/admin/verification?type=background_check",
         },
       ],
     };
@@ -766,13 +1004,13 @@ const generateVerificationRecommendations = (profile) => {
 
   // Document-based recommendations
   const licenseDoc = profile.documents?.find(
-    (doc) => doc.type === "medical_license"
+    (doc) => doc.type === "medical_license",
   );
   if (!licenseDoc) {
     recommendations.push("Request medical license documentation");
   } else if (!licenseDoc.verified) {
     recommendations.push(
-      "Verify medical license document against state registry"
+      "Verify medical license document against state registry",
     );
   }
 
@@ -800,6 +1038,9 @@ module.exports = {
   verifyIdentity: exports.verifyIdentity,
   verifyMedicalLicense: exports.verifyMedicalLicense,
   verifyBackgroundCheck: exports.verifyBackgroundCheck,
+  revokeVerification: exports.revokeVerification,
+  getVerifiedUsers: exports.getVerifiedUsers,
+  getRejectedUsers: exports.getRejectedUsers,
   bulkVerification: exports.bulkVerification,
   getVerificationStats: exports.getVerificationStats,
   getLiveMetrics: exports.getLiveMetrics,

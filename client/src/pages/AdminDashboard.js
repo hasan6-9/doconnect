@@ -1,5 +1,6 @@
 // client/src/pages/AdminDashboard.js - REAL-TIME ADMIN DASHBOARD WITH WEBSOCKET + POLLING
 import React, { useState, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { adminAPI } from "../api";
 import { useAdminSocket } from "../hooks/useAdminSocket";
@@ -55,6 +56,9 @@ const AdminDashboard = () => {
   // Socket.IO connection for real-time updates
   const { socket, isConnected, connectionError } = useAdminSocket();
 
+  // Navigation hook for in-app navigation
+  const navigate = useNavigate();
+
   // Real-time metrics with polling fallback
   const {
     metrics: dashboardData,
@@ -85,6 +89,22 @@ const AdminDashboard = () => {
   const [allApplications, setAllApplications] = useState([]);
   const [selectedApplications, setSelectedApplications] = useState([]);
   const [applicationsPagination, setApplicationsPagination] = useState({
+    page: 1,
+    total: 0,
+    pages: 0,
+  });
+
+  // Approved doctors states
+  const [approvedDoctors, setApprovedDoctors] = useState([]);
+  const [approvedPagination, setApprovedPagination] = useState({
+    page: 1,
+    total: 0,
+    pages: 0,
+  });
+
+  // Rejected users states
+  const [rejectedUsers, setRejectedUsers] = useState([]);
+  const [rejectedPagination, setRejectedPagination] = useState({
     page: 1,
     total: 0,
     pages: 0,
@@ -159,7 +179,7 @@ const AdminDashboard = () => {
         console.error("Error details:", err.response?.data);
       }
     },
-    []
+    [],
   );
 
   const fetchPendingVerifications = useCallback(
@@ -179,13 +199,13 @@ const AdminDashboard = () => {
         console.error("Error fetching pending verifications:", err);
         if (!silent)
           setError(
-            err.response?.data?.message || "Failed to fetch verifications"
+            err.response?.data?.message || "Failed to fetch verifications",
           );
       } finally {
         if (!silent) setLoading(false);
       }
     },
-    [filters.type, filters.page, filters.limit]
+    [filters.type, filters.page, filters.limit],
   );
 
   const fetchAllUsers = useCallback(
@@ -210,14 +230,14 @@ const AdminDashboard = () => {
         if (!silent) setLoading(false);
       }
     },
-    [filters.page]
+    [filters.page],
   );
 
   const verifyProfile = async (
     userId,
     verificationType,
     status,
-    notes = ""
+    notes = "",
   ) => {
     setShowConfirmModal(null);
 
@@ -234,13 +254,13 @@ const AdminDashboard = () => {
         case "medical_license":
           response = await adminAPI.verifyMedicalLicense(
             userId,
-            verificationData
+            verificationData,
           );
           break;
         case "background_check":
           response = await adminAPI.verifyBackgroundCheck(
             userId,
-            verificationData
+            verificationData,
           );
           break;
         default:
@@ -252,6 +272,8 @@ const AdminDashboard = () => {
       // Refresh data
       await Promise.all([
         fetchPendingVerifications(true),
+        fetchApprovedDoctors(true),
+        fetchRejectedUsers(true),
         refreshMetrics(),
         fetchVerificationStats("30d", true),
       ]);
@@ -260,6 +282,38 @@ const AdminDashboard = () => {
     } catch (err) {
       console.error("Error verifying profile:", err);
       setError(err.response?.data?.message || "Failed to verify profile");
+      setTimeout(() => setError(""), 5000);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const revokeVerification = async (userId, verificationType, notes = "") => {
+    setShowConfirmModal(null);
+
+    try {
+      setLoading(true);
+
+      const response = await adminAPI.revokeVerification(
+        userId,
+        verificationType,
+        notes,
+      );
+
+      setSuccess(response.data.message || `Verification revoked successfully`);
+
+      // Refresh data
+      await Promise.all([
+        fetchPendingVerifications(true),
+        fetchApprovedDoctors(true),
+        refreshMetrics(),
+        fetchVerificationStats("30d", true),
+      ]);
+
+      setTimeout(() => setSuccess(""), 3000);
+    } catch (err) {
+      console.error("Error revoking verification:", err);
+      setError(err.response?.data?.message || "Failed to revoke verification");
       setTimeout(() => setError(""), 5000);
     } finally {
       setLoading(false);
@@ -334,7 +388,7 @@ const AdminDashboard = () => {
         if (!silent) setLoading(false);
       }
     },
-    [filters.page, filters.limit, filters.status, filters.search]
+    [filters.page, filters.limit, filters.status, filters.search],
   );
 
   const handleJobAction = async (jobId, action, reason = "") => {
@@ -406,13 +460,67 @@ const AdminDashboard = () => {
         console.error("Error fetching applications:", err);
         if (!silent)
           setError(
-            err.response?.data?.message || "Failed to fetch applications"
+            err.response?.data?.message || "Failed to fetch applications",
           );
       } finally {
         if (!silent) setLoading(false);
       }
     },
-    [filters.page, filters.limit, filters.status, filters.search]
+    [filters.page, filters.limit, filters.status, filters.search],
+  );
+
+  const fetchApprovedDoctors = useCallback(
+    async (silent = false) => {
+      try {
+        if (!silent) setLoading(true);
+        const params = {
+          page: filters.page,
+          limit: filters.limit,
+          search: filters.search || undefined,
+        };
+
+        const response = await adminAPI.getVerifiedUsers(params);
+        setApprovedDoctors(response.data.data);
+        setApprovedPagination(response.data.pagination);
+        setError("");
+      } catch (err) {
+        console.error("Error fetching approved doctors:", err);
+        if (!silent)
+          setError(
+            err.response?.data?.message || "Failed to fetch approved doctors",
+          );
+      } finally {
+        if (!silent) setLoading(false);
+      }
+    },
+    [filters.page, filters.limit, filters.search],
+  );
+
+  const fetchRejectedUsers = useCallback(
+    async (silent = false) => {
+      try {
+        if (!silent) setLoading(true);
+        const params = {
+          page: filters.page,
+          limit: filters.limit,
+          search: filters.search || undefined,
+        };
+
+        const response = await adminAPI.getRejectedUsers(params);
+        setRejectedUsers(response.data.data);
+        setRejectedPagination(response.data.pagination);
+        setError("");
+      } catch (err) {
+        console.error("Error fetching rejected users:", err);
+        if (!silent)
+          setError(
+            err.response?.data?.message || "Failed to fetch rejected users",
+          );
+      } finally {
+        if (!silent) setLoading(false);
+      }
+    },
+    [filters.page, filters.limit, filters.search],
   );
 
   // Fetch data when tab or filters change (moved here after function definitions)
@@ -430,6 +538,10 @@ const AdminDashboard = () => {
     } else if (activeTab === "stats" && isAdmin()) {
       console.log("📊 Stats tab activated, fetching verification stats...");
       fetchVerificationStats();
+    } else if (activeTab === "approved" && isAdmin()) {
+      fetchApprovedDoctors();
+    } else if (activeTab === "rejected" && isAdmin()) {
+      fetchRejectedUsers();
     }
   }, [
     filters,
@@ -440,12 +552,14 @@ const AdminDashboard = () => {
     fetchAllJobs,
     fetchAllApplications,
     fetchVerificationStats,
+    fetchApprovedDoctors,
+    fetchRejectedUsers,
   ]);
 
   const handleResolveDispute = async (
     applicationId,
     resolution,
-    notes = ""
+    notes = "",
   ) => {
     setShowConfirmModal(null);
 
@@ -454,7 +568,7 @@ const AdminDashboard = () => {
       const response = await adminAPI.resolveDispute(
         applicationId,
         resolution,
-        notes
+        notes,
       );
       setSuccess(response.data.message || "Dispute resolved successfully");
 
@@ -939,8 +1053,8 @@ const AdminDashboard = () => {
                 onClick={() =>
                   setShowConfirmModal({
                     type: "bulk-approve",
-                    title: "Bulk Approve",
-                    message: `Are you sure you want to approve ${selectedUsers.length} user(s)?`,
+                    title: "Bulk Approve Identity Verification",
+                    message: `Are you sure you want to approve identity verification for ${selectedUsers.length} selected user(s)? This will mark their identity as verified.`,
                     action: () => bulkVerify("verified"),
                   })
                 }
@@ -948,14 +1062,14 @@ const AdminDashboard = () => {
                 disabled={loading}
               >
                 <Check className="w-4 h-4" />
-                <span>Approve All</span>
+                <span>Approve Identity (All)</span>
               </button>
               <button
                 onClick={() =>
                   setShowConfirmModal({
                     type: "bulk-reject",
-                    title: "Bulk Reject",
-                    message: `Are you sure you want to reject ${selectedUsers.length} user(s)?`,
+                    title: "Bulk Reject Identity Verification",
+                    message: `Are you sure you want to reject identity verification for ${selectedUsers.length} selected user(s)? This will mark their identity as rejected.`,
                     action: () => bulkVerify("rejected"),
                   })
                 }
@@ -963,7 +1077,7 @@ const AdminDashboard = () => {
                 disabled={loading}
               >
                 <X className="w-4 h-4" />
-                <span>Reject All</span>
+                <span>Reject Identity (All)</span>
               </button>
               <button
                 onClick={() => setSelectedUsers([])}
@@ -1029,7 +1143,7 @@ const AdminDashboard = () => {
                         setSelectedUsers((prev) => [...prev, profile._id]);
                       } else {
                         setSelectedUsers((prev) =>
-                          prev.filter((id) => id !== profile._id)
+                          prev.filter((id) => id !== profile._id),
                         );
                       }
                     }}
@@ -1092,8 +1206,8 @@ const AdminDashboard = () => {
                           profile.verificationStatus.identity === "verified"
                             ? "bg-green-50 border-green-200"
                             : profile.verificationStatus.identity === "rejected"
-                            ? "bg-red-50 border-red-200"
-                            : "bg-yellow-50 border-yellow-200"
+                              ? "bg-red-50 border-red-200"
+                              : "bg-yellow-50 border-yellow-200"
                         }`}
                       >
                         <p className="text-xs text-gray-600 mb-1">Identity</p>
@@ -1107,9 +1221,9 @@ const AdminDashboard = () => {
                           "verified"
                             ? "bg-green-50 border-green-200"
                             : profile.verificationStatus.medical_license ===
-                              "rejected"
-                            ? "bg-red-50 border-red-200"
-                            : "bg-yellow-50 border-yellow-200"
+                                "rejected"
+                              ? "bg-red-50 border-red-200"
+                              : "bg-yellow-50 border-yellow-200"
                         }`}
                       >
                         <p className="text-xs text-gray-600 mb-1">
@@ -1125,9 +1239,9 @@ const AdminDashboard = () => {
                           "verified"
                             ? "bg-green-50 border-green-200"
                             : profile.verificationStatus.background_check ===
-                              "rejected"
-                            ? "bg-red-50 border-red-200"
-                            : "bg-yellow-50 border-yellow-200"
+                                "rejected"
+                              ? "bg-red-50 border-red-200"
+                              : "bg-yellow-50 border-yellow-200"
                         }`}
                       >
                         <p className="text-xs text-gray-600 mb-1">Background</p>
@@ -1167,7 +1281,9 @@ const AdminDashboard = () => {
                       <button
                         onClick={() =>
                           setExpandedProfile(
-                            expandedProfile === profile._id ? null : profile._id
+                            expandedProfile === profile._id
+                              ? null
+                              : profile._id,
                           )
                         }
                         className="flex items-center space-x-2 text-blue-600 hover:text-blue-800 font-medium"
@@ -1186,13 +1302,13 @@ const AdminDashboard = () => {
                           onClick={() =>
                             setShowConfirmModal({
                               type: "approve",
-                              title: "Approve Verification",
+                              title: "Approve Identity Verification",
                               message: `Approve identity verification for Dr. ${profile.firstName} ${profile.lastName}?`,
                               action: () =>
                                 verifyProfile(
                                   profile._id,
                                   "identity",
-                                  "verified"
+                                  "verified",
                                 ),
                             })
                           }
@@ -1200,20 +1316,20 @@ const AdminDashboard = () => {
                           disabled={loading}
                         >
                           <CheckCircle className="w-4 h-4" />
-                          <span>Approve</span>
+                          <span>Approve Identity</span>
                         </button>
                         <button
                           onClick={() =>
                             setShowConfirmModal({
                               type: "reject",
-                              title: "Reject Verification",
+                              title: "Reject Identity Verification",
                               message: `Reject identity verification for Dr. ${profile.firstName} ${profile.lastName}?`,
                               action: () =>
                                 verifyProfile(
                                   profile._id,
                                   "identity",
                                   "rejected",
-                                  "Documents require review"
+                                  "Documents require review",
                                 ),
                             })
                           }
@@ -1221,7 +1337,7 @@ const AdminDashboard = () => {
                           disabled={loading}
                         >
                           <XCircle className="w-4 h-4" />
-                          <span>Reject</span>
+                          <span>Reject Identity</span>
                         </button>
                       </div>
                     </div>
@@ -1280,8 +1396,21 @@ const AdminDashboard = () => {
                                 onClick={() =>
                                   verifyProfile(
                                     profile._id,
+                                    "identity",
+                                    "verified",
+                                  )
+                                }
+                                className="w-full text-left px-3 py-2 text-sm text-green-700 bg-green-50 hover:bg-green-100 rounded border border-green-200"
+                                disabled={loading}
+                              >
+                                ✓ Approve Identity
+                              </button>
+                              <button
+                                onClick={() =>
+                                  verifyProfile(
+                                    profile._id,
                                     "medical_license",
-                                    "verified"
+                                    "verified",
                                   )
                                 }
                                 className="w-full text-left px-3 py-2 text-sm text-green-700 bg-green-50 hover:bg-green-100 rounded border border-green-200"
@@ -1294,7 +1423,7 @@ const AdminDashboard = () => {
                                   verifyProfile(
                                     profile._id,
                                     "background_check",
-                                    "verified"
+                                    "verified",
                                   )
                                 }
                                 className="w-full text-left px-3 py-2 text-sm text-green-700 bg-green-50 hover:bg-green-100 rounded border border-green-200"
@@ -1304,7 +1433,7 @@ const AdminDashboard = () => {
                               </button>
                               <button
                                 onClick={() =>
-                                  alert("Full profile view - Coming soon")
+                                  navigate(`/profile/${profile._id}`)
                                 }
                                 className="w-full text-left px-3 py-2 text-sm text-blue-700 bg-blue-50 hover:bg-blue-100 rounded border border-blue-200"
                               >
@@ -1335,6 +1464,581 @@ const AdminDashboard = () => {
     </div>
   );
 
+  const ApprovedDoctorsTab = () => (
+    <div className="space-y-6">
+      {/* Search and Filters */}
+      <div className="bg-white rounded-xl border border-gray-200 p-5">
+        <div className="flex flex-col lg:flex-row lg:items-center gap-4">
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Search approved doctors..."
+              value={filters.search}
+              onChange={(e) =>
+                setFilters((prev) => ({
+                  ...prev,
+                  search: e.target.value,
+                  page: 1,
+                }))
+              }
+              className="w-full pl-10 pr-4 py-2.5 text-sm border border-gray-200 rounded-lg bg-gray-50 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-150 placeholder:text-gray-400"
+            />
+          </div>
+          <button
+            onClick={() => fetchApprovedDoctors()}
+            disabled={loading}
+            className="flex items-center justify-center space-x-2 px-4 py-2.5 text-sm font-medium border border-gray-200 rounded-lg bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-150 min-w-[110px]"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+            <span>Refresh</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Approved Doctors List */}
+      <div className="space-y-4">
+        {loading ? (
+          <div className="space-y-4">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <div
+                key={index}
+                className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 animate-pulse"
+              >
+                <div className="flex items-center space-x-4">
+                  <div className="w-16 h-16 bg-gray-200 rounded-full"></div>
+                  <div className="flex-1 space-y-2">
+                    <div className="h-4 bg-gray-200 rounded w-1/3"></div>
+                    <div className="h-3 bg-gray-200 rounded w-1/2"></div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : approvedDoctors.length > 0 ? (
+          <>
+            {approvedDoctors.map((profile) => (
+              <div
+                key={profile._id}
+                className="bg-white rounded-xl border border-gray-200 p-6 hover:border-green-300 hover:shadow-sm transition-all duration-200"
+              >
+                <div className="flex items-start space-x-4">
+                  <div className="w-16 h-16 bg-gradient-to-br from-green-100 to-green-200 rounded-full overflow-hidden flex-shrink-0">
+                    {profile.profilePhoto?.url ? (
+                      <img
+                        src={profile.profilePhoto.url}
+                        alt="Profile"
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <User className="w-8 h-8 text-green-600" />
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex-1">
+                    <div className="flex items-start justify-between mb-3">
+                      <div>
+                        <h4 className="text-xl font-bold text-gray-900">
+                          Dr. {profile.firstName} {profile.lastName}
+                        </h4>
+                        <p className="text-green-600 font-semibold text-lg">
+                          {profile.primarySpecialty}
+                        </p>
+                        <div className="flex items-center space-x-4 mt-2 text-sm text-gray-600">
+                          <span className="flex items-center">
+                            <Mail className="w-4 h-4 mr-1" />
+                            {profile.email}
+                          </span>
+                          <span className="flex items-center">
+                            <Briefcase className="w-4 h-4 mr-1" />
+                            {profile.yearsOfExperience} years exp.
+                          </span>
+                        </div>
+                        <p className="text-gray-500 text-sm mt-1">
+                          <span className="font-medium">License:</span>{" "}
+                          {profile.medicalLicenseNumber} ({profile.licenseState}
+                          )
+                        </p>
+                      </div>
+
+                      <div className="text-right">
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium border bg-green-50 text-green-700 border-green-200">
+                          <CheckCircle className="w-3 h-3 mr-1" />
+                          Verified
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Verification Status Cards */}
+                    <div className="grid grid-cols-3 gap-3 mb-4">
+                      <div className="p-3 rounded-lg border-2 bg-green-50 border-green-200">
+                        <p className="text-xs text-gray-600 mb-1">Identity</p>
+                        <StatusBadge
+                          status={
+                            profile.verificationStatus?.identity || "verified"
+                          }
+                        />
+                      </div>
+                      <div className="p-3 rounded-lg border-2 bg-green-50 border-green-200">
+                        <p className="text-xs text-gray-600 mb-1">
+                          Medical License
+                        </p>
+                        <StatusBadge
+                          status={
+                            profile.verificationStatus?.medical_license ||
+                            "verified"
+                          }
+                        />
+                      </div>
+                      <div className="p-3 rounded-lg border-2 bg-green-50 border-green-200">
+                        <p className="text-xs text-gray-600 mb-1">Background</p>
+                        <StatusBadge
+                          status={
+                            profile.verificationStatus?.background_check ||
+                            "verified"
+                          }
+                        />
+                      </div>
+                    </div>
+
+                    {/* Revoke Actions */}
+                    <div className="flex items-center justify-between pt-4 border-t border-gray-200">
+                      <button
+                        onClick={() => navigate(`/profile/${profile._id}`)}
+                        className="flex items-center space-x-2 text-blue-600 hover:text-blue-800 font-medium"
+                      >
+                        <Eye className="w-4 h-4" />
+                        <span>View Profile</span>
+                      </button>
+
+                      <div className="flex space-x-2">
+                        {profile.verificationStatus?.identity ===
+                          "verified" && (
+                          <button
+                            onClick={() =>
+                              setShowConfirmModal({
+                                type: "revoke",
+                                title: "Revoke Identity Verification",
+                                message: `Revoke identity verification for Dr. ${profile.firstName} ${profile.lastName}? They will need to be re-verified.`,
+                                action: () =>
+                                  revokeVerification(profile._id, "identity"),
+                              })
+                            }
+                            className="flex items-center space-x-1 text-xs bg-red-50 text-red-700 px-3 py-1.5 rounded-lg border border-red-200 hover:bg-red-100 hover:border-red-300 transition-all duration-150 font-medium disabled:opacity-50"
+                            disabled={loading}
+                          >
+                            <XCircle className="w-3 h-3" />
+                            <span>Revoke Identity</span>
+                          </button>
+                        )}
+                        {profile.verificationStatus?.medical_license ===
+                          "verified" && (
+                          <button
+                            onClick={() =>
+                              setShowConfirmModal({
+                                type: "revoke",
+                                title: "Revoke License Verification",
+                                message: `Revoke medical license verification for Dr. ${profile.firstName} ${profile.lastName}? They will need to be re-verified.`,
+                                action: () =>
+                                  revokeVerification(
+                                    profile._id,
+                                    "medical_license",
+                                  ),
+                              })
+                            }
+                            className="flex items-center space-x-1 text-xs bg-red-50 text-red-700 px-3 py-1.5 rounded-lg border border-red-200 hover:bg-red-100 hover:border-red-300 transition-all duration-150 font-medium disabled:opacity-50"
+                            disabled={loading}
+                          >
+                            <XCircle className="w-3 h-3" />
+                            <span>Revoke License</span>
+                          </button>
+                        )}
+                        {profile.verificationStatus?.background_check ===
+                          "verified" && (
+                          <button
+                            onClick={() =>
+                              setShowConfirmModal({
+                                type: "revoke",
+                                title: "Revoke Background Check",
+                                message: `Revoke background check for Dr. ${profile.firstName} ${profile.lastName}? They will need to be re-verified.`,
+                                action: () =>
+                                  revokeVerification(
+                                    profile._id,
+                                    "background_check",
+                                  ),
+                              })
+                            }
+                            className="flex items-center space-x-1 text-xs bg-red-50 text-red-700 px-3 py-1.5 rounded-lg border border-red-200 hover:bg-red-100 hover:border-red-300 transition-all duration-150 font-medium disabled:opacity-50"
+                            disabled={loading}
+                          >
+                            <XCircle className="w-3 h-3" />
+                            <span>Revoke Background</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+
+            {/* Pagination */}
+            {approvedPagination.pages > 1 && (
+              <div className="flex items-center justify-between bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+                <span className="text-sm text-gray-600">
+                  Showing {approvedDoctors.length} of {approvedPagination.total}{" "}
+                  verified doctors
+                </span>
+                <div className="flex space-x-2">
+                  <button
+                    onClick={() =>
+                      setFilters((prev) => ({ ...prev, page: prev.page - 1 }))
+                    }
+                    disabled={approvedPagination.page === 1}
+                    className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Previous
+                  </button>
+                  <span className="px-4 py-2 text-gray-600">
+                    Page {approvedPagination.page} of {approvedPagination.pages}
+                  </span>
+                  <button
+                    onClick={() =>
+                      setFilters((prev) => ({ ...prev, page: prev.page + 1 }))
+                    }
+                    disabled={
+                      approvedPagination.page === approvedPagination.pages
+                    }
+                    className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-16 text-center">
+            <Award className="w-20 h-20 text-gray-300 mx-auto mb-4" />
+            <h3 className="text-2xl font-bold text-gray-900 mb-2">
+              No verified doctors yet
+            </h3>
+            <p className="text-gray-600">
+              Verify doctors from the Verification Queue to see them here.
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  const RejectedUsersTab = () => (
+    <div className="space-y-6">
+      {/* Search and Filters */}
+      <div className="bg-white rounded-xl border border-gray-200 p-5">
+        <div className="flex flex-col lg:flex-row lg:items-center gap-4">
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Search rejected users..."
+              value={filters.search}
+              onChange={(e) =>
+                setFilters((prev) => ({
+                  ...prev,
+                  search: e.target.value,
+                  page: 1,
+                }))
+              }
+              className="w-full pl-10 pr-4 py-2.5 text-sm border border-gray-200 rounded-lg bg-gray-50 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-150 placeholder:text-gray-400"
+            />
+          </div>
+          <button
+            onClick={() => fetchRejectedUsers()}
+            disabled={loading}
+            className="flex items-center justify-center space-x-2 px-4 py-2.5 text-sm font-medium border border-gray-200 rounded-lg bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-150 min-w-[110px]"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+            <span>Refresh</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Rejected Users List */}
+      <div className="space-y-4">
+        {loading ? (
+          <div className="space-y-4">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <div
+                key={index}
+                className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 animate-pulse"
+              >
+                <div className="flex items-center space-x-4">
+                  <div className="w-16 h-16 bg-gray-200 rounded-full"></div>
+                  <div className="flex-1 space-y-2">
+                    <div className="h-4 bg-gray-200 rounded w-1/3"></div>
+                    <div className="h-3 bg-gray-200 rounded w-1/2"></div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : rejectedUsers.length > 0 ? (
+          <>
+            {rejectedUsers.map((profile) => (
+              <div
+                key={profile._id}
+                className="bg-white rounded-xl border border-gray-200 p-6 hover:border-red-300 hover:shadow-sm transition-all duration-200"
+              >
+                <div className="flex items-start space-x-4">
+                  <div className="w-16 h-16 bg-gradient-to-br from-red-100 to-red-200 rounded-full overflow-hidden flex-shrink-0">
+                    {profile.profilePhoto?.url ? (
+                      <img
+                        src={profile.profilePhoto.url}
+                        alt="Profile"
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <User className="w-8 h-8 text-red-600" />
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex-1">
+                    <div className="flex items-start justify-between mb-3">
+                      <div>
+                        <h4 className="text-xl font-bold text-gray-900">
+                          Dr. {profile.firstName} {profile.lastName}
+                        </h4>
+                        <p className="text-red-600 font-semibold text-lg">
+                          {profile.primarySpecialty}
+                        </p>
+                        <div className="flex items-center space-x-4 mt-2 text-sm text-gray-600">
+                          <span className="flex items-center">
+                            <Mail className="w-4 h-4 mr-1" />
+                            {profile.email}
+                          </span>
+                          <span className="flex items-center">
+                            <Briefcase className="w-4 h-4 mr-1" />
+                            {profile.yearsOfExperience} years exp.
+                          </span>
+                        </div>
+                        <p className="text-gray-500 text-sm mt-1">
+                          <span className="font-medium">License:</span>{" "}
+                          {profile.medicalLicenseNumber} ({profile.licenseState}
+                          )
+                        </p>
+                      </div>
+
+                      <div className="text-right">
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium border bg-red-50 text-red-700 border-red-200">
+                          <XCircle className="w-3 h-3 mr-1" />
+                          Has Rejections
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Verification Status Cards */}
+                    <div className="grid grid-cols-3 gap-3 mb-4">
+                      <div
+                        className={`p-3 rounded-lg border-2 ${
+                          profile.verificationStatus?.identity === "verified"
+                            ? "bg-green-50 border-green-200"
+                            : profile.verificationStatus?.identity ===
+                                "rejected"
+                              ? "bg-red-50 border-red-200"
+                              : "bg-yellow-50 border-yellow-200"
+                        }`}
+                      >
+                        <p className="text-xs text-gray-600 mb-1">Identity</p>
+                        <StatusBadge
+                          status={
+                            profile.verificationStatus?.identity || "pending"
+                          }
+                        />
+                      </div>
+                      <div
+                        className={`p-3 rounded-lg border-2 ${
+                          profile.verificationStatus?.medical_license ===
+                          "verified"
+                            ? "bg-green-50 border-green-200"
+                            : profile.verificationStatus?.medical_license ===
+                                "rejected"
+                              ? "bg-red-50 border-red-200"
+                              : "bg-yellow-50 border-yellow-200"
+                        }`}
+                      >
+                        <p className="text-xs text-gray-600 mb-1">
+                          Medical License
+                        </p>
+                        <StatusBadge
+                          status={
+                            profile.verificationStatus?.medical_license ||
+                            "pending"
+                          }
+                        />
+                      </div>
+                      <div
+                        className={`p-3 rounded-lg border-2 ${
+                          profile.verificationStatus?.background_check ===
+                          "verified"
+                            ? "bg-green-50 border-green-200"
+                            : profile.verificationStatus?.background_check ===
+                                "rejected"
+                              ? "bg-red-50 border-red-200"
+                              : "bg-yellow-50 border-yellow-200"
+                        }`}
+                      >
+                        <p className="text-xs text-gray-600 mb-1">Background</p>
+                        <StatusBadge
+                          status={
+                            profile.verificationStatus?.background_check ||
+                            "pending"
+                          }
+                        />
+                      </div>
+                    </div>
+
+                    {/* Re-approve Actions */}
+                    <div className="flex items-center justify-between pt-4 border-t border-gray-200">
+                      <button
+                        onClick={() => navigate(`/profile/${profile._id}`)}
+                        className="flex items-center space-x-2 text-blue-600 hover:text-blue-800 font-medium"
+                      >
+                        <Eye className="w-4 h-4" />
+                        <span>View Profile</span>
+                      </button>
+
+                      <div className="flex space-x-2">
+                        {profile.verificationStatus?.identity ===
+                          "rejected" && (
+                          <button
+                            onClick={() =>
+                              setShowConfirmModal({
+                                type: "approve",
+                                title: "Re-approve Identity",
+                                message: `Re-approve identity verification for Dr. ${profile.firstName} ${profile.lastName}?`,
+                                action: () =>
+                                  verifyProfile(
+                                    profile._id,
+                                    "identity",
+                                    "verified",
+                                  ),
+                              })
+                            }
+                            className="flex items-center space-x-1 text-xs bg-green-50 text-green-700 px-3 py-1.5 rounded-lg border border-green-200 hover:bg-green-100 hover:border-green-300 transition-all duration-150 font-medium disabled:opacity-50"
+                            disabled={loading}
+                          >
+                            <CheckCircle className="w-3 h-3" />
+                            <span>Approve Identity</span>
+                          </button>
+                        )}
+                        {profile.verificationStatus?.medical_license ===
+                          "rejected" && (
+                          <button
+                            onClick={() =>
+                              setShowConfirmModal({
+                                type: "approve",
+                                title: "Re-approve License",
+                                message: `Re-approve medical license for Dr. ${profile.firstName} ${profile.lastName}?`,
+                                action: () =>
+                                  verifyProfile(
+                                    profile._id,
+                                    "medical_license",
+                                    "verified",
+                                  ),
+                              })
+                            }
+                            className="flex items-center space-x-1 text-xs bg-green-50 text-green-700 px-3 py-1.5 rounded-lg border border-green-200 hover:bg-green-100 hover:border-green-300 transition-all duration-150 font-medium disabled:opacity-50"
+                            disabled={loading}
+                          >
+                            <CheckCircle className="w-3 h-3" />
+                            <span>Approve License</span>
+                          </button>
+                        )}
+                        {profile.verificationStatus?.background_check ===
+                          "rejected" && (
+                          <button
+                            onClick={() =>
+                              setShowConfirmModal({
+                                type: "approve",
+                                title: "Re-approve Background",
+                                message: `Re-approve background check for Dr. ${profile.firstName} ${profile.lastName}?`,
+                                action: () =>
+                                  verifyProfile(
+                                    profile._id,
+                                    "background_check",
+                                    "verified",
+                                  ),
+                              })
+                            }
+                            className="flex items-center space-x-1 text-xs bg-green-50 text-green-700 px-3 py-1.5 rounded-lg border border-green-200 hover:bg-green-100 hover:border-green-300 transition-all duration-150 font-medium disabled:opacity-50"
+                            disabled={loading}
+                          >
+                            <CheckCircle className="w-3 h-3" />
+                            <span>Approve Background</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+
+            {/* Pagination */}
+            {rejectedPagination.pages > 1 && (
+              <div className="flex items-center justify-between bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+                <span className="text-sm text-gray-600">
+                  Showing {rejectedUsers.length} of {rejectedPagination.total}{" "}
+                  rejected users
+                </span>
+                <div className="flex space-x-2">
+                  <button
+                    onClick={() =>
+                      setFilters((prev) => ({ ...prev, page: prev.page - 1 }))
+                    }
+                    disabled={rejectedPagination.page === 1}
+                    className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Previous
+                  </button>
+                  <span className="px-4 py-2 text-gray-600">
+                    Page {rejectedPagination.page} of {rejectedPagination.pages}
+                  </span>
+                  <button
+                    onClick={() =>
+                      setFilters((prev) => ({ ...prev, page: prev.page + 1 }))
+                    }
+                    disabled={
+                      rejectedPagination.page === rejectedPagination.pages
+                    }
+                    className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-16 text-center">
+            <XCircle className="w-20 h-20 text-gray-300 mx-auto mb-4" />
+            <h3 className="text-2xl font-bold text-gray-900 mb-2">
+              No rejected users
+            </h3>
+            <p className="text-gray-600">
+              Users with rejected verifications will appear here.
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
   const StatsTab = () => (
     <div className="space-y-6">
       {verificationStats ? (
@@ -1356,7 +2060,7 @@ const AdminDashboard = () => {
               subtitle="Target: <3 days"
             />
             <MetricCard
-              title="Verified Users"
+              title="Fully Verified Users"
               value={verificationStats.overview?.verifiedUsers || 0}
               icon={CheckCircle}
               color="green"
@@ -1369,7 +2073,7 @@ const AdminDashboard = () => {
               value={verificationStats.pending?.total || 0}
               icon={AlertTriangle}
               color="yellow"
-              subtitle="Requires attention"
+              subtitle="Excludes rejected"
             />
           </div>
 
@@ -1765,7 +2469,7 @@ const AdminDashboard = () => {
                         setSelectedJobs((prev) => [...prev, job._id]);
                       } else {
                         setSelectedJobs((prev) =>
-                          prev.filter((id) => id !== job._id)
+                          prev.filter((id) => id !== job._id),
                         );
                       }
                     }}
@@ -1894,7 +2598,7 @@ const AdminDashboard = () => {
                   Showing {(jobsPagination.page - 1) * filters.limit + 1} to{" "}
                   {Math.min(
                     jobsPagination.page * filters.limit,
-                    jobsPagination.total
+                    jobsPagination.total,
                   )}{" "}
                   of {jobsPagination.total} jobs
                 </div>
@@ -2104,7 +2808,7 @@ const AdminDashboard = () => {
                                 handleResolveDispute(
                                   app._id,
                                   "reinstate",
-                                  "Admin reinstated application"
+                                  "Admin reinstated application",
                                 ),
                             })
                           }
@@ -2124,7 +2828,7 @@ const AdminDashboard = () => {
                                 handleResolveDispute(
                                   app._id,
                                   "close",
-                                  "Admin closed application"
+                                  "Admin closed application",
                                 ),
                             })
                           }
@@ -2149,7 +2853,7 @@ const AdminDashboard = () => {
                   {(applicationsPagination.page - 1) * filters.limit + 1} to{" "}
                   {Math.min(
                     applicationsPagination.page * filters.limit,
-                    applicationsPagination.total
+                    applicationsPagination.total,
                   )}{" "}
                   of {applicationsPagination.total} applications
                 </div>
@@ -2203,7 +2907,25 @@ const AdminDashboard = () => {
         id: "pending",
         label: "Verification Queue",
         icon: Clock,
-        count: dashboardData?.metrics?.verification?.pending || 0,
+        count:
+          pendingVerifications.length ||
+          dashboardData?.metrics?.verification?.pending ||
+          0,
+      },
+      {
+        id: "approved",
+        label: "Approved Doctors",
+        icon: Award,
+        count:
+          approvedPagination.total ||
+          dashboardData?.metrics?.verification?.verified ||
+          0,
+      },
+      {
+        id: "rejected",
+        label: "Rejected Users",
+        icon: XCircle,
+        count: rejectedPagination.total || 0,
       },
       { id: "stats", label: "Analytics", icon: TrendingUp, count: null },
       { id: "jobs", label: "Job Management", icon: Briefcase, count: null },
@@ -2337,6 +3059,8 @@ const AdminDashboard = () => {
       <div className="min-h-96 animate-fadeInUp" key={activeTab}>
         {activeTab === "overview" && <OverviewTab />}
         {activeTab === "pending" && <PendingVerificationsTab />}
+        {activeTab === "approved" && <ApprovedDoctorsTab />}
+        {activeTab === "rejected" && <RejectedUsersTab />}
         {activeTab === "stats" && <StatsTab />}
         {activeTab === "jobs" && <JobManagementTab />}
         {activeTab === "applications" && <ApplicationManagementTab />}
