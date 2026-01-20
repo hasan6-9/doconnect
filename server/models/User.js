@@ -42,7 +42,7 @@ const ExperienceSchema = new mongoose.Schema(
       required: true,
     },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 const CertificationSchema = new mongoose.Schema(
@@ -77,7 +77,7 @@ const CertificationSchema = new mongoose.Schema(
       default: false,
     },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 const SkillSchema = new mongoose.Schema({
@@ -153,7 +153,7 @@ const ReviewSchema = new mongoose.Schema(
       default: false,
     },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 const AvailabilitySchema = new mongoose.Schema({
@@ -259,7 +259,7 @@ const DocumentSchema = new mongoose.Schema(
       trim: true,
     },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 const ProfileAnalyticsSchema = new mongoose.Schema({
@@ -715,7 +715,7 @@ const UserSchema = new mongoose.Schema(
     timestamps: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true },
-  }
+  },
 );
 
 // Indexes for performance (removed duplicates - unique fields auto-index)
@@ -782,7 +782,7 @@ UserSchema.virtual("calculatedProfileCompletion").get(function () {
 
   completionScore = Object.values(sections).reduce(
     (sum, score) => sum + score,
-    0
+    0,
   );
   return Math.min(completionScore, 100);
 });
@@ -867,7 +867,7 @@ const jwt = require("jsonwebtoken");
 // Method to sign JWT and return
 UserSchema.methods.getSignedJwtToken = function () {
   return jwt.sign({ id: this._id }, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRE,
+    expiresIn: process.env.JWT_EXPIRE || "30d",
   });
 };
 
@@ -875,7 +875,7 @@ UserSchema.methods.getSignedJwtToken = function () {
 UserSchema.methods.updateVerificationStatus = function () {
   const statuses = Object.values(this.verificationStatus);
   const verifiedCount = statuses.filter(
-    (status) => status === "verified"
+    (status) => status === "verified",
   ).length;
 
   if (verifiedCount === 0) {
@@ -891,7 +891,7 @@ UserSchema.methods.updateVerificationStatus = function () {
 // Method to add profile view
 UserSchema.methods.addProfileView = async function (
   viewer = null,
-  anonymousId = null
+  anonymousId = null,
 ) {
   // Don't count self-views
   if (viewer && viewer.toString() === this._id.toString()) {
@@ -924,7 +924,7 @@ UserSchema.methods.addProfileView = async function (
       (view) =>
         view.viewer &&
         view.viewer.toString() === viewer.toString() &&
-        view.viewedAt > new Date(Date.now() - 24 * 60 * 60 * 1000)
+        view.viewedAt > new Date(Date.now() - 24 * 60 * 60 * 1000),
     );
     if (recentView) return;
   }
@@ -977,7 +977,7 @@ UserSchema.methods.updateRating = function () {
     professionalism: 0,
   };
   const reviewsWithCategories = this.reviews.filter(
-    (review) => review.categories
+    (review) => review.categories,
   );
 
   if (reviewsWithCategories.length > 0) {
@@ -1100,7 +1100,7 @@ UserSchema.methods.updateJobStatistics = async function () {
 
       this.job_statistics.total_spent = completedJobs.reduce(
         (sum, job) => sum + (job.budget.amount || 0),
-        0
+        0,
       );
     } else if (this.role === "junior") {
       // Update job seeker statistics
@@ -1124,7 +1124,7 @@ UserSchema.methods.updateJobStatistics = async function () {
 
       this.job_statistics.total_earnings = completedApplications.reduce(
         (sum, app) => sum + (app.proposal.proposed_budget || 0),
-        0
+        0,
       );
     }
 
@@ -1205,7 +1205,7 @@ UserSchema.methods.canApplyToJob = function (job) {
   console.log("  Job Preferences:", this.job_preferences);
   console.log(
     "  Seeking Opportunities:",
-    this.job_preferences?.seeking_opportunities
+    this.job_preferences?.seeking_opportunities,
   );
 
   // Check role
@@ -1242,7 +1242,7 @@ UserSchema.methods.canApplyToJob = function (job) {
     console.log("    Required:", job.experience_required.minimum_years);
     console.log("    User has:", this.yearsOfExperience);
     reasons.push(
-      `Minimum ${job.experience_required.minimum_years} years of experience required`
+      `Minimum ${job.experience_required.minimum_years} years of experience required`,
     );
   } else {
     console.log("  ✅ Experience check passed");
@@ -1254,7 +1254,7 @@ UserSchema.methods.canApplyToJob = function (job) {
       this.primarySpecialty?.toLowerCase() === job.specialty.toLowerCase() ||
       (this.subspecialties &&
         this.subspecialties.some(
-          (sub) => sub.toLowerCase() === job.specialty.toLowerCase()
+          (sub) => sub.toLowerCase() === job.specialty.toLowerCase(),
         ));
 
     if (!specialtyMatch) {
